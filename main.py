@@ -1,7 +1,7 @@
 from typing import Final, Self
 from collections.abc import Generator
 from dataclasses import dataclass
-import pyglet
+import pyglet # type: ignore
 
 
 @dataclass
@@ -176,11 +176,12 @@ def main():
 
   window = pyglet.window.Window(width=window_width, height=window_height)
 
-  @window.event
   def on_draw():
     window.clear()
     renderer.render_map(game_map)
     renderer.finish()
+
+  window.event(on_draw) # type: ignore
 
   pyglet.app.run(0)
 
