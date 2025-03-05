@@ -12,8 +12,12 @@
     devShell.${system} = pkgs.mkShell {
       buildInputs = [
         (pkgs.python312.withPackages (python-pkgs: [
-          python-pkgs.mypy
+          # User libraries
+          python-pkgs.numpy
           python-pkgs.pyglet
+
+          # Extra tools
+          python-pkgs.mypy
           python-pkgs.flake8
           python-pkgs.pylint
         ]))

@@ -1,10 +1,12 @@
-from typing import Final, Self
-from collections.abc import Generator
 from dataclasses import dataclass
-import pyglet # type: ignore
+from typing import Self, Final
+from collections.abc import Generator
+
+import pyglet  # type: ignore
+import numpy as np
 
 
-@dataclass
+@dataclass(slots=True)
 class Bitset2D:
   width: int
   height: int
@@ -30,7 +32,7 @@ class Bitset2D:
     idx = self.index(x, y)
     if idx is None:
       return False
-    return (self.data >> idx) & 1 == 0
+    return (self.data >> idx) & 1 != 0
 
   def remove(self, x: int, y: int) -> None:
     idx = self.index(x, y)
@@ -49,7 +51,7 @@ class Bitset2D:
 
     for _ in range(self.height):
       row = data & mask
-      print(f"{row:0{self.width}b}".translate(table))
+      print(f'{row:0{self.width}b}'.translate(table))
       data >>= self.width
 
   def iter(self) -> Generator[tuple[int, int]]:
@@ -67,12 +69,21 @@ class Bitset2D:
     return self.data.bit_count()
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class Map:
+  walls: Bitset2D
+  doors: Bitset2D
+
+  ghost_house_start: tuple[int, int]
+  ghost_house_end: tuple[int, int]
+
+
+@dataclass(slots=True)
+class GameState:
   width: int
   height: int
 
-  walls: Bitset2D
+  map: Map
   coins: Bitset2D
   pellets: Bitset2D
 
@@ -83,14 +94,29 @@ class Map:
       w = max(len(line) for line in lines)
       h = len(lines)
 
+      doors = Bitset2D(w, h)
       walls = Bitset2D(w, h)
       coins = Bitset2D(w, h)
       pellets = Bitset2D(w, h)
 
-      for y, line in enumerate(lines):
+      ghost_house_start = (w, h)
+      ghost_house_end = (-1, -1)
+
+      for lineno, line in enumerate(lines):
         for x, tile in enumerate(line):
+          y = h - lineno - 1
           if tile in '#+-':
             walls.add(x, y)
+
+          if tile == '-':
+            doors.add(x, y)
+
+          if tile == '+':
+            if x <= ghost_house_start[0] and y <= ghost_house_start[1]:
+              ghost_house_start = (x, y)
+
+            if x >= ghost_house_end[0] and y >= ghost_house_end[1]:
+              ghost_house_end = (x, y)
 
           if tile == '.':
             coins.add(x, y)
@@ -101,9 +127,14 @@ class Map:
       return cls(
         width=w,
         height=h,
-        walls=walls,
         coins=coins,
         pellets=pellets,
+        map=Map(
+          walls=walls,
+          doors=doors,
+          ghost_house_start=ghost_house_start,
+          ghost_house_end=ghost_house_end,
+        )
       )
 
 
@@ -112,21 +143,144 @@ class Config:
   COIN_RADIUS: Final = 4
   PELLET_RADIUS: Final = 8
   COIN_COLOR: Final = (255, 184, 151, 255)
+  PATH_COLOR: Final = (0, 0, 0, 255)
+  WALL_COLOR: Final = (33, 33, 222, 255)
+  DOOR_COLOR: Final = COIN_COLOR
 
 
-@dataclass
 class Renderer:
-  batch: pyglet.graphics.Batch
-  coins: list[pyglet.shapes.Circle]
-  pellets: list[pyglet.shapes.Circle]
+  def __init__(self, game_map: Map) -> None:
+    self.batch = pyglet.graphics.Batch()
 
-  @classmethod
-  def new(cls) -> Self:
-    return cls(batch=pyglet.graphics.Batch(), coins=[], pellets=[])
+    self.coins: list[pyglet.shapes.Circle] = []
+    self.pellets: list[pyglet.shapes.Circle] = []
 
-  def render_map(self, game_map: Map) -> None:
-    coins_len = game_map.coins.len()
-    pellets_len = game_map.pellets.len()
+    w = game_map.walls.width
+    h = game_map.walls.height
+
+    res = Config.PX_PER_UNIT
+
+    rgba_array = np.full(
+      fill_value=Config.WALL_COLOR,
+      shape=(h, w, res, res, 4),
+      dtype=np.uint8
+    )
+
+    for x, y in game_map.doors.iter():
+      rgba_array[y, x, :, :] = Config.DOOR_COLOR
+
+    for y in range(h):
+      for x in range(w):
+        road_pad = res * 1 // 8 if (
+          game_map.ghost_house_start[0] < x < game_map.ghost_house_end[0] and
+          game_map.ghost_house_start[1] < y < game_map.ghost_house_end[1]
+        ) else res * 5 // 11
+
+        door_pad = road_pad + res // 5
+
+        if game_map.walls.get(x, y):
+          if x - 1 >= 0 and not game_map.walls.get(x - 1, y):
+            if y - 1 >= 0 and not game_map.walls.get(x, y - 1):
+              for i in range(road_pad, road_pad + road_pad):
+                for j in range(road_pad, road_pad + road_pad):
+                  di = road_pad + road_pad - i
+                  dj = road_pad + road_pad - j
+
+                  if di * di + dj * dj > road_pad * road_pad:
+                    rgba_array[y, x, i, j] = Config.PATH_COLOR
+            if y + 1 < h and not game_map.walls.get(x, y + 1):
+              for i in range(res - road_pad - road_pad, res - road_pad):
+                for j in range(road_pad, road_pad + road_pad):
+                  di = i - (res - road_pad - road_pad) + 1
+                  dj = road_pad + road_pad - j
+                  if di * di + dj * dj > road_pad * road_pad:
+                    rgba_array[y, x, i, j] = Config.PATH_COLOR
+
+          if x + 1 < w and not game_map.walls.get(x + 1, y):
+            if y - 1 >= 0 and not game_map.walls.get(x, y - 1):
+              for i in range(road_pad, road_pad + road_pad):
+                for j in range(res - road_pad - road_pad, res - road_pad):
+                  di = road_pad + road_pad - i
+                  dj = j - (res - road_pad - road_pad) + 1
+                  if di * di + dj * dj > road_pad * road_pad:
+                    rgba_array[y, x, i, j] = Config.PATH_COLOR
+
+            if y + 1 < h and not game_map.walls.get(x, y + 1):
+              for i in range(res - road_pad - road_pad, res - road_pad):
+                for j in range(res - road_pad - road_pad, res - road_pad):
+                  di = i - (res - road_pad - road_pad) + 1
+                  dj = j - (res - road_pad - road_pad) + 1
+                  if di * di + dj * dj > road_pad * road_pad:
+                    rgba_array[y, x, i, j] = Config.PATH_COLOR
+        else:
+          rgba_array[y, x, :, :] = Config.PATH_COLOR
+
+          if x - 1 >= 0:
+            pad = door_pad if game_map.doors.get(x - 1, y) else road_pad
+            rgba_array[y, x - 1, :, res - pad:] = Config.PATH_COLOR
+          if x + 1 < w:
+            pad = door_pad if game_map.doors.get(x + 1, y) else road_pad
+            rgba_array[y, x + 1, :, :pad] = Config.PATH_COLOR
+          if y - 1 >= 0:
+            pad = door_pad if game_map.doors.get(x, y - 1) else road_pad
+            rgba_array[y - 1, x, res - pad:, :] = Config.PATH_COLOR
+          if y + 1 < h:
+            pad = door_pad if game_map.doors.get(x, y + 1) else road_pad
+            rgba_array[y + 1, x, :pad, :] = Config.PATH_COLOR
+
+          if x - 1 >= 0:
+            if y - 1 >= 0:
+              for i in range(res - road_pad, res):
+                for j in range(res - road_pad, res):
+                  di = res - i
+                  dj = res - j
+
+                  if di * di + dj * dj <= road_pad * road_pad:
+                    rgba_array[y - 1, x - 1, i, j, :] = Config.PATH_COLOR
+
+            if y + 1 < h:
+              for i in range(road_pad):
+                for j in range(res - road_pad, res):
+                  di = i + 1
+                  dj = res - j
+
+                  if di * di + dj * dj <= road_pad * road_pad:
+                    rgba_array[y + 1, x - 1, i, j, :] = Config.PATH_COLOR
+
+          if x + 1 < w:
+            if y - 1 >= 0:
+              for i in range(res - road_pad, res):
+                for j in range(road_pad):
+                  di = res - i
+                  dj = j + 1
+
+                  if di * di + dj * dj <= road_pad * road_pad:
+                    rgba_array[y - 1, x + 1, i, j, :] = Config.PATH_COLOR
+
+            if y + 1 < h:
+              for i in range(road_pad):
+                for j in range(road_pad):
+                  di = i + 1
+                  dj = j + 1
+
+                  if di * di + dj * dj <= road_pad * road_pad:
+                    rgba_array[y + 1, x + 1, i, j, :] = Config.PATH_COLOR
+
+    rgba_bytes = rgba_array.transpose((0, 2, 1, 3, 4)).tobytes()
+
+    # Create an ImageData object
+    image_data = pyglet.image.ImageData(
+      width=w * res,
+      height=h * res,
+      fmt='RGBA',
+      data=rgba_bytes
+    )
+    self.texture = image_data.get_texture()
+    self.sprite = pyglet.sprite.Sprite(self.texture, batch=self.batch)
+
+  def render_state(self, state: GameState) -> None:
+    coins_len = state.coins.len()
+    pellets_len = state.pellets.len()
 
     while len(self.coins) > coins_len:
       del self.coins[-1]
@@ -152,38 +306,36 @@ class Renderer:
         batch=self.batch
       ))
 
-    coin_pad = (Config.PX_PER_UNIT - Config.COIN_RADIUS) / 2
-    pellet_pad = (Config.PX_PER_UNIT - Config.PELLET_RADIUS) / 2
+    for (x, y), coin in zip(state.coins.iter(), self.coins):
+      coin.x = (x * 2 + 1) * Config.PX_PER_UNIT // 2
+      coin.y = (y * 2 + 1) * Config.PX_PER_UNIT // 2
 
-    for (x, y), coin in zip(game_map.coins.iter(), self.coins):
-      coin.x = x * Config.PX_PER_UNIT + coin_pad
-      coin.y = (game_map.height - y - 1) * Config.PX_PER_UNIT + coin_pad
-
-    for (x, y), pellet in zip(game_map.pellets.iter(), self.pellets):
-      pellet.x = x * Config.PX_PER_UNIT + pellet_pad
-      pellet.y = (game_map.height - y - 1) * Config.PX_PER_UNIT + pellet_pad
+    for (x, y), pellet in zip(state.pellets.iter(), self.pellets):
+      pellet.x = (x * 2 + 1) * Config.PX_PER_UNIT // 2
+      pellet.y = (y * 2 + 1) * Config.PX_PER_UNIT // 2
 
   def finish(self) -> None:
     self.batch.draw()
 
 
 def main():
-  game_map = Map.from_file('./map.txt')
-  renderer = Renderer.new()
+  state = GameState.from_file('./map.txt')
 
-  window_width = Config.PX_PER_UNIT * game_map.width
-  window_height = Config.PX_PER_UNIT * game_map.height
+  window = pyglet.window.Window(
+    width=Config.PX_PER_UNIT * state.width + 512,
+    height=Config.PX_PER_UNIT * state.height + 64,
+  )
 
-  window = pyglet.window.Window(width=window_width, height=window_height)
+  renderer = Renderer(state.map)
 
   def on_draw():
     window.clear()
-    renderer.render_map(game_map)
+    renderer.render_state(state)
     renderer.finish()
 
-  window.event(on_draw) # type: ignore
+  window.event(on_draw)  # type: ignore
 
-  pyglet.app.run(0)
+  pyglet.app.run()
 
 
 if __name__ == '__main__':
