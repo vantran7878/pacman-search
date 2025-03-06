@@ -19,6 +19,7 @@ disable=missing-function-docstring,
         too-many-nested-blocks,
         too-many-branches,
         too-many-statements,
+        too-many-instance-attributes,
 
 [STRING]
 check-quote-consistency=yes

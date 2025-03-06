@@ -1,9 +1,34 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Self, Final
+from typing import Self, Final, Literal
 from collections.abc import Generator
 
 import pyglet  # type: ignore
 import numpy as np
+
+type Direction = Literal['up', 'right', 'down', 'left']
+
+
+class Config:
+  PX_PER_UNIT: Final = 24
+  COIN_RADIUS: Final = 4
+  PELLET_RADIUS: Final = 8
+  COIN_COLOR: Final = (255, 184, 151, 255)
+  PATH_COLOR: Final = (0, 0, 0, 255)
+  WALL_COLOR: Final = (33, 33, 222, 255)
+  DOOR_COLOR: Final = COIN_COLOR
+  PACMAN_COLOR: Final = (255, 255, 0, 255)
+  TPS: Final = 4
+
+
+NEXT_POS: Final[dict[Direction | None, tuple[int, int]]] = {
+  'up': (0, 1),
+  'right': (1, 0),
+  'down': (0, -1),
+  'left': (-1, 0),
+  None: (0, 0),
+}
 
 
 @dataclass(slots=True)
@@ -34,13 +59,14 @@ class Bitset2D:
       return False
     return (self.data >> idx) & 1 != 0
 
-  def remove(self, x: int, y: int) -> None:
+  def remove(self, x: int, y: int) -> bool:
     idx = self.index(x, y)
     if idx is None:
-      return
+      return False
 
     mask = (self.data >> idx) & 1
     self.data ^= mask << idx
+    return mask != 0
 
   def display(self, chars: tuple[str, str] = ('0', '1')) -> None:
     mask = (1 << self.width) - 1
@@ -79,6 +105,74 @@ class Map:
 
 
 @dataclass(slots=True)
+class Pacman:
+  started: bool
+  pos: tuple[int, int]
+  dir: Direction | None
+  next_dir: Direction | None
+  frame: float
+
+  def update(self, dt: float, state: GameState):
+    if not self.started:
+      if self.next_dir == 'left':
+        self.dir = 'left'
+        x, y = self.pos
+        self.pos = (x + 1, y)
+        self.frame = 0.5
+        self.started = True
+
+      if self.next_dir == 'right':
+        self.dir = 'right'
+        self.frame = 0.5
+        self.started = True
+
+    else:
+      if self.dir is not None:
+        self.frame += dt * Config.TPS
+        if self.frame >= 1:
+          x, y = self.pos
+          dx, dy = NEXT_POS[self.dir]
+
+          x += dx
+          y += dy
+
+          match x:
+            case state.width:
+              self.next_dir = 'right'
+              x = -1
+            case -1:
+              self.next_dir = 'left'
+              x = state.width
+
+            case _:
+              pass
+
+          if state.coins.remove(x, y):
+            state.score += 10
+
+          if state.pellets.remove(x, y):
+            state.score += 50
+
+          self.pos = (x, y)
+
+          if self.next_dir is not None:
+            rx, ry = NEXT_POS[self.next_dir]
+            if not state.map.walls.get(x + rx, y + ry):
+              self.dir = self.next_dir
+
+          dx, dy = NEXT_POS[self.dir]
+          if state.map.walls.get(x + dx, y + dy):
+            self.dir = None
+          self.frame = 0
+
+      elif self.next_dir is not None:
+        x, y = self.pos
+        dx, dy = NEXT_POS[self.next_dir]
+        if not state.map.walls.get(x + dx, y + dy):
+          self.dir = self.next_dir
+
+
+@dataclass(slots=True)
 class GameState:
   width: int
   height: int
@@ -86,6 +180,9 @@ class GameState:
   map: Map
   coins: Bitset2D
   pellets: Bitset2D
+
+  pacman: Pacman
+  score: int
 
   @classmethod
   def from_file(cls, filename: str) -> Self:
@@ -102,6 +199,8 @@ class GameState:
       ghost_house_start = (w, h)
       ghost_house_end = (-1, -1)
 
+      pacman_pos = None
+
       for lineno, line in enumerate(lines):
         for x, tile in enumerate(line):
           y = h - lineno - 1
@@ -110,6 +209,9 @@ class GameState:
 
           if tile == '-':
             doors.add(x, y)
+
+          if line[x:x + 2] == 'SS':
+            pacman_pos = (x, y)
 
           if tile == '+':
             if x <= ghost_house_start[0] and y <= ghost_house_start[1]:
@@ -124,11 +226,21 @@ class GameState:
           if tile == '*':
             pellets.add(x, y)
 
+      assert pacman_pos is not None, 'Pacman position not defined'
+
       return cls(
         width=w,
         height=h,
         coins=coins,
         pellets=pellets,
+        score=0,
+        pacman=Pacman(
+          started=False,
+          pos=pacman_pos,
+          dir=None,
+          next_dir=None,
+          frame=0,
+        ),
         map=Map(
           walls=walls,
           doors=doors,
@@ -138,19 +250,11 @@ class GameState:
       )
 
 
-class Config:
-  PX_PER_UNIT: Final = 24
-  COIN_RADIUS: Final = 4
-  PELLET_RADIUS: Final = 8
-  COIN_COLOR: Final = (255, 184, 151, 255)
-  PATH_COLOR: Final = (0, 0, 0, 255)
-  WALL_COLOR: Final = (33, 33, 222, 255)
-  DOOR_COLOR: Final = COIN_COLOR
-
-
 class Renderer:
   def __init__(self, game_map: Map) -> None:
     self.batch = pyglet.graphics.Batch()
+    self.background = pyglet.graphics.Group(0)
+    self.foreground = pyglet.graphics.Group(1)
 
     self.coins: list[pyglet.shapes.Circle] = []
     self.pellets: list[pyglet.shapes.Circle] = []
@@ -268,7 +372,6 @@ class Renderer:
 
     rgba_bytes = rgba_array.transpose((0, 2, 1, 3, 4)).tobytes()
 
-    # Create an ImageData object
     image_data = pyglet.image.ImageData(
       width=w * res,
       height=h * res,
@@ -276,17 +379,44 @@ class Renderer:
       data=rgba_bytes
     )
     self.texture = image_data.get_texture()
-    self.sprite = pyglet.sprite.Sprite(self.texture, batch=self.batch)
+    self.sprite = pyglet.sprite.Sprite(
+      self.texture,
+      batch=self.batch,
+      group=self.background,
+    )
+
+    self.pacman = pyglet.shapes.Circle(
+      x=0,
+      y=0,
+      radius=Config.PX_PER_UNIT * 4 // 5,
+      color=Config.PACMAN_COLOR,
+      batch=self.batch,
+      group=self.foreground,
+    )
 
   def render_state(self, state: GameState) -> None:
     coins_len = state.coins.len()
     pellets_len = state.pellets.len()
 
+    pacman_x, pacman_y = state.pacman.pos
+    if state.pacman.started is False:
+      self.pacman.x = (pacman_x + 1) * Config.PX_PER_UNIT
+      self.pacman.y = (pacman_y * 2 + 1) * Config.PX_PER_UNIT // 2
+    else:
+      x, y = state.pacman.pos
+      dx, dy = NEXT_POS[state.pacman.dir]
+
+      tx = (x + dx * state.pacman.frame) * 2 + 1
+      ty = (y + dy * state.pacman.frame) * 2 + 1
+
+      self.pacman.x = tx * Config.PX_PER_UNIT // 2
+      self.pacman.y = ty * Config.PX_PER_UNIT // 2
+
     while len(self.coins) > coins_len:
       del self.coins[-1]
 
     while len(self.pellets) > pellets_len:
-      del self.coins[-1]
+      del self.pellets[-1]
 
     while len(self.coins) < coins_len:
       self.coins.append(pyglet.shapes.Circle(
@@ -294,7 +424,8 @@ class Renderer:
         y=0,
         radius=Config.COIN_RADIUS,
         color=Config.COIN_COLOR,
-        batch=self.batch
+        batch=self.batch,
+        group=self.background,
       ))
 
     while len(self.pellets) < pellets_len:
@@ -326,14 +457,32 @@ def main():
     height=Config.PX_PER_UNIT * state.height + 64,
   )
 
+  keys = pyglet.window.key.KeyStateHandler()
+  window.push_handlers(keys)  # type: ignore
+
   renderer = Renderer(state.map)
 
-  def on_draw():
+  def on_key_press(symbol: int, modifiers: int):
+    keymap: dict[int, Direction] = {
+      pyglet.window.key.UP: 'up',
+      pyglet.window.key.RIGHT: 'right',
+      pyglet.window.key.DOWN: 'down',
+      pyglet.window.key.LEFT: 'left',
+    }
+
+    direction = keymap.get(symbol)
+
+    if modifiers == 0 and direction is not None:
+      state.pacman.next_dir = direction
+
+  def update(dt: float):
+    state.pacman.update(dt, state)
     window.clear()
     renderer.render_state(state)
     renderer.finish()
 
-  window.event(on_draw)  # type: ignore
+  pyglet.clock.schedule(update)  # type: ignore
+  window.event(on_key_press)  # type: ignore
 
   pyglet.app.run()
 
