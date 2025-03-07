@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Self, Final, Literal
 from collections.abc import Generator
 
@@ -16,6 +16,7 @@ class Config:
   PELLET_RADIUS: Final = 8
   HEADER_HEIGHT: Final = 64
   SIDEBAR_WIDTH: Final = 512
+  LINE_HEIGHT: Final = 32
 
   COIN_COLOR: Final = (255, 184, 151, 255)
   PATH_COLOR: Final = (0, 0, 0, 255)
@@ -24,7 +25,6 @@ class Config:
   PACMAN_COLOR: Final = (255, 255, 0, 255)
 
   SIDEBAR_BG: Final = (18, 18, 18, 255)
-
   TPS: Final = 4
 
 
@@ -35,6 +35,26 @@ NEXT_POS: Final[dict[Direction | None, tuple[int, int]]] = {
   'left': (-1, 0),
   None: (0, 0),
 }
+
+
+@dataclass(slots=True)
+class FPSCounter:
+  accumulated_frames: int = 0
+  accumulated_time: float = 0
+  fps: int = 0
+
+  def update(self, dt: float) -> bool:
+    self.accumulated_time += dt
+    self.accumulated_frames += 1
+
+    if self.accumulated_time >= 1:
+      self.fps = self.accumulated_frames
+      self.accumulated_time = 0
+      self.accumulated_frames = 0
+
+      return True
+
+    return False
 
 
 @dataclass(slots=True)
@@ -112,11 +132,11 @@ class Map:
 
 @dataclass(slots=True)
 class Pacman:
-  started: bool
   pos: tuple[int, int]
-  dir: Direction | None
-  next_dir: Direction | None
-  frame: float
+  started: bool = False
+  dir: Direction | None = None
+  next_dir: Direction | None = None
+  frame: float = 0
 
   def update(self, dt: float, state: GameState):
     if not self.started:
@@ -155,9 +175,11 @@ class Pacman:
 
           if state.coins.remove(x, y):
             state.score += 10
+            state.removed_coins.append((x, y))
 
           if state.pellets.remove(x, y):
             state.score += 50
+            state.removed_coins.append((x, y))
 
           self.pos = (x, y)
 
@@ -188,7 +210,9 @@ class GameState:
   pellets: Bitset2D
 
   pacman: Pacman
-  score: int
+
+  score: int = 0
+  removed_coins: list[tuple[int, int]] = field(default_factory=list)
 
   @classmethod
   def from_file(cls, filename: str) -> Self:
@@ -239,14 +263,7 @@ class GameState:
         height=h,
         coins=coins,
         pellets=pellets,
-        score=0,
-        pacman=Pacman(
-          started=False,
-          pos=pacman_pos,
-          dir=None,
-          next_dir=None,
-          frame=0,
-        ),
+        pacman=Pacman(pos=pacman_pos),
         map=Map(
           walls=walls,
           doors=doors,
@@ -257,38 +274,11 @@ class GameState:
 
 
 class Renderer:
-  def __init__(self, game_map: Map) -> None:
+  def __init__(self, state: GameState) -> None:
     self.batch = pyglet.graphics.Batch()
-    self.background = pyglet.graphics.Group(0)
-    self.foreground = pyglet.graphics.Group(1)
-    self.sidebar = pyglet.graphics.Group(2)
 
-    self.coins: list[pyglet.shapes.Circle] = []
-    self.pellets: list[pyglet.shapes.Circle] = []
-
-    w = game_map.walls.width
-    h = game_map.walls.height
-
-    self.score_label = pyglet.text.Label(
-      'Score: 0',
-      font_size=Config.HEADER_HEIGHT // 3,
-      x=w * Config.PX_PER_UNIT // 2,
-      y=h * Config.PX_PER_UNIT + Config.HEADER_HEIGHT // 2,
-      color=Config.PACMAN_COLOR,
-      anchor_x='center',
-      anchor_y='center',
-      batch=self.batch,
-    )
-
-    self.sidebar_background = pyglet.shapes.Rectangle(
-      x=w * Config.PX_PER_UNIT,
-      y=0,
-      width=Config.SIDEBAR_WIDTH,
-      height=h * Config.PX_PER_UNIT + Config.HEADER_HEIGHT,
-      color=Config.SIDEBAR_BG,
-      batch=self.batch,
-      group=self.sidebar,
-    )
+    w = state.map.walls.width
+    h = state.map.walls.height
 
     res = Config.PX_PER_UNIT
 
@@ -298,21 +288,21 @@ class Renderer:
       dtype=np.uint8
     )
 
-    for x, y in game_map.doors.iter():
+    for x, y in state.map.doors.iter():
       rgba_array[y, x, :, :] = Config.DOOR_COLOR
 
     for y in range(h):
       for x in range(w):
         road_pad = res * 1 // 8 if (
-          game_map.ghost_house_start[0] < x < game_map.ghost_house_end[0] and
-          game_map.ghost_house_start[1] < y < game_map.ghost_house_end[1]
+          state.map.ghost_house_start[0] < x < state.map.ghost_house_end[0] and
+          state.map.ghost_house_start[1] < y < state.map.ghost_house_end[1]
         ) else res * 5 // 11
 
         door_pad = road_pad + res // 5
 
-        if game_map.walls.get(x, y):
-          if x - 1 >= 0 and not game_map.walls.get(x - 1, y):
-            if y - 1 >= 0 and not game_map.walls.get(x, y - 1):
+        if state.map.walls.get(x, y):
+          if x - 1 >= 0 and not state.map.walls.get(x - 1, y):
+            if y - 1 >= 0 and not state.map.walls.get(x, y - 1):
               li, ri = road_pad, road_pad + road_pad
               lj, rj = road_pad, road_pad + road_pad
 
@@ -322,7 +312,7 @@ class Renderer:
               mask = di * di + dj * dj > road_pad * road_pad
               rgba_array[y, x, li:ri, lj:rj][mask] = Config.PATH_COLOR
 
-            if y + 1 < h and not game_map.walls.get(x, y + 1):
+            if y + 1 < h and not state.map.walls.get(x, y + 1):
               li, ri = res - road_pad - road_pad, res - road_pad
               lj, rj = road_pad, road_pad + road_pad
 
@@ -332,8 +322,8 @@ class Renderer:
               mask = di * di + dj * dj > road_pad * road_pad
               rgba_array[y, x, li:ri, lj:rj][mask] = Config.PATH_COLOR
 
-          if x + 1 < w and not game_map.walls.get(x + 1, y):
-            if y - 1 >= 0 and not game_map.walls.get(x, y - 1):
+          if x + 1 < w and not state.map.walls.get(x + 1, y):
+            if y - 1 >= 0 and not state.map.walls.get(x, y - 1):
               li, ri = road_pad, road_pad + road_pad
               lj, rj = res - road_pad - road_pad, res - road_pad
 
@@ -343,7 +333,7 @@ class Renderer:
               mask = di * di + dj * dj > road_pad * road_pad
               rgba_array[y, x, li:ri, lj:rj][mask] = Config.PATH_COLOR
 
-            if y + 1 < h and not game_map.walls.get(x, y + 1):
+            if y + 1 < h and not state.map.walls.get(x, y + 1):
               li, ri = res - road_pad - road_pad, res - road_pad
               lj, rj = res - road_pad - road_pad, res - road_pad
 
@@ -356,16 +346,16 @@ class Renderer:
           rgba_array[y, x] = Config.PATH_COLOR
 
           if x - 1 >= 0:
-            pad = door_pad if game_map.doors.get(x - 1, y) else road_pad
+            pad = door_pad if state.map.doors.get(x - 1, y) else road_pad
             rgba_array[y, x - 1, :, res - pad:] = Config.PATH_COLOR
           if x + 1 < w:
-            pad = door_pad if game_map.doors.get(x + 1, y) else road_pad
+            pad = door_pad if state.map.doors.get(x + 1, y) else road_pad
             rgba_array[y, x + 1, :, :pad] = Config.PATH_COLOR
           if y - 1 >= 0:
-            pad = door_pad if game_map.doors.get(x, y - 1) else road_pad
+            pad = door_pad if state.map.doors.get(x, y - 1) else road_pad
             rgba_array[y - 1, x, res - pad:, :] = Config.PATH_COLOR
           if y + 1 < h:
-            pad = door_pad if game_map.doors.get(x, y + 1) else road_pad
+            pad = door_pad if state.map.doors.get(x, y + 1) else road_pad
             rgba_array[y + 1, x, :pad, :] = Config.PATH_COLOR
 
           if x - 1 >= 0:
@@ -422,8 +412,29 @@ class Renderer:
     self.sprite = pyglet.sprite.Sprite(
       self.texture,
       batch=self.batch,
-      group=self.background,
     )
+
+    self.coins = {
+      (x, y): pyglet.shapes.Circle(
+        x=(x * 2 + 1) * Config.PX_PER_UNIT // 2,
+        y=(y * 2 + 1) * Config.PX_PER_UNIT // 2,
+        color=Config.COIN_COLOR,
+        radius=Config.COIN_RADIUS,
+        batch=self.batch,
+      )
+      for x, y in state.coins.iter()
+    }
+
+    self.pellets = {
+      (x, y): pyglet.shapes.Circle(
+        x=(x * 2 + 1) * Config.PX_PER_UNIT // 2,
+        y=(y * 2 + 1) * Config.PX_PER_UNIT // 2,
+        color=Config.COIN_COLOR,
+        radius=Config.PELLET_RADIUS,
+        batch=self.batch,
+      )
+      for x, y in state.pellets.iter()
+    }
 
     self.pacman = pyglet.shapes.Circle(
       x=0,
@@ -431,13 +442,57 @@ class Renderer:
       radius=Config.PX_PER_UNIT * 4 // 5,
       color=Config.PACMAN_COLOR,
       batch=self.batch,
-      group=self.foreground,
     )
 
-  def render_state(self, state: GameState) -> None:
-    coins_len = state.coins.len()
-    pellets_len = state.pellets.len()
+    self.sidebar_background = pyglet.shapes.Rectangle(
+      x=w * Config.PX_PER_UNIT,
+      y=0,
+      width=Config.SIDEBAR_WIDTH,
+      height=h * Config.PX_PER_UNIT + Config.HEADER_HEIGHT,
+      color=Config.SIDEBAR_BG,
+      batch=self.batch,
+    )
 
+    self.score_label = pyglet.text.Label(
+      'Score: 0',
+      font_size=Config.HEADER_HEIGHT // 3,
+      x=w * Config.PX_PER_UNIT // 2,
+      y=h * Config.PX_PER_UNIT + Config.HEADER_HEIGHT // 2,
+      color=Config.PACMAN_COLOR,
+      anchor_x='center',
+      anchor_y='center',
+      batch=self.batch,
+    )
+
+    self.stats_title = pyglet.text.Label(
+      'Statistics',
+      font_size=Config.HEADER_HEIGHT // 3,
+      x=w * Config.PX_PER_UNIT + Config.SIDEBAR_WIDTH // 2,
+      y=h * Config.PX_PER_UNIT + Config.HEADER_HEIGHT // 2,
+      color=Config.PACMAN_COLOR,
+      anchor_y='center',
+      anchor_x='center',
+      batch=self.batch,
+    )
+
+    self.fps_counter = pyglet.text.Label(
+      'Frame rate: 0 FPS',
+      font_size=Config.PX_PER_UNIT * 5 // 8,
+      x=w * Config.PX_PER_UNIT + Config.PX_PER_UNIT,
+      y=h * Config.PX_PER_UNIT - Config.LINE_HEIGHT // 2,
+      anchor_y='center',
+      anchor_x='left',
+      batch=self.batch,
+    )
+
+  def render_coins(self, state: GameState) -> None:
+    for x, y in state.removed_coins:
+      self.coins.pop((x, y), None)
+      self.pellets.pop((x, y), None)
+
+    state.removed_coins = []
+
+  def render_pacman(self, state: GameState) -> None:
     pacman_x, pacman_y = state.pacman.pos
     if state.pacman.started is False:
       self.pacman.x = (pacman_x + 1) * Config.PX_PER_UNIT
@@ -452,42 +507,13 @@ class Renderer:
       self.pacman.x = tx * Config.PX_PER_UNIT // 2
       self.pacman.y = ty * Config.PX_PER_UNIT // 2
 
-    while len(self.coins) > coins_len:
-      del self.coins[-1]
-
-    while len(self.pellets) > pellets_len:
-      del self.pellets[-1]
-
-    while len(self.coins) < coins_len:
-      self.coins.append(pyglet.shapes.Circle(
-        x=0,
-        y=0,
-        radius=Config.COIN_RADIUS,
-        color=Config.COIN_COLOR,
-        batch=self.batch,
-        group=self.background,
-      ))
-
-    while len(self.pellets) < pellets_len:
-      self.pellets.append(pyglet.shapes.Circle(
-        x=0,
-        y=0,
-        radius=Config.PELLET_RADIUS,
-        color=Config.COIN_COLOR,
-        batch=self.batch
-      ))
-
+  def render_ui(self, state: GameState) -> None:
     self.score_label.text = f"Score: {state.score}"
 
-    for (x, y), coin in zip(state.coins.iter(), self.coins):
-      coin.x = (x * 2 + 1) * Config.PX_PER_UNIT // 2
-      coin.y = (y * 2 + 1) * Config.PX_PER_UNIT // 2
-
-    for (x, y), pellet in zip(state.pellets.iter(), self.pellets):
-      pellet.x = (x * 2 + 1) * Config.PX_PER_UNIT // 2
-      pellet.y = (y * 2 + 1) * Config.PX_PER_UNIT // 2
-
-  def finish(self) -> None:
+  def render(self, state: GameState) -> None:
+    self.render_coins(state)
+    self.render_pacman(state)
+    self.render_ui(state)
     self.batch.draw()
 
 
@@ -497,12 +523,10 @@ def main():
   window = pyglet.window.Window(
     width=Config.PX_PER_UNIT * state.width + Config.SIDEBAR_WIDTH,
     height=Config.PX_PER_UNIT * state.height + Config.HEADER_HEIGHT,
+    caption='Pacman search',
   )
 
-  keys = pyglet.window.key.KeyStateHandler()
-  window.push_handlers(keys)  # type: ignore
-
-  renderer = Renderer(state.map)
+  renderer = Renderer(state)
 
   def on_key_press(symbol: int, modifiers: int):
     keymap: dict[int, Direction] = {
@@ -527,14 +551,22 @@ def main():
     if modifiers == 0 and direction is not None:
       state.pacman.next_dir = direction
 
+  fps_counter = FPSCounter()
+
   def update(dt: float):
+    if fps_counter.update(dt):
+      renderer.fps_counter.text = f"Frame rate: {fps_counter.fps} FPS"
     state.pacman.update(dt, state)
+
     window.clear()
-    renderer.render_state(state)
-    renderer.finish()
+    renderer.render(state)
+
+  def on_draw():
+    pass
 
   pyglet.clock.schedule(update)  # type: ignore
   window.event(on_key_press)  # type: ignore
+  window.event(on_draw)  # type: ignore
 
   pyglet.app.run()
 
