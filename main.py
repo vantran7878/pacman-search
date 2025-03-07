@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from abc import abstractmethod
 from dataclasses import dataclass, field
-from typing import Self, Final, Literal
+from typing import Self, Final, Literal, Protocol
 from collections.abc import Generator
 
 import pyglet  # type: ignore
@@ -24,16 +25,27 @@ class Config:
   DOOR_COLOR: Final = COIN_COLOR
   PACMAN_COLOR: Final = (255, 255, 0, 255)
 
+  BLINKY_COLOR: Final = (255, 0, 0, 255)
+  PINKY_COLOR: Final = (255, 184, 222, 255)
+  INKY_COLOR: Final = (0, 255, 222, 255)
+  CLYDE_COLOR: Final = (255, 184, 71, 255)
+
   SIDEBAR_BG: Final = (18, 18, 18, 255)
   TPS: Final = 4
 
 
-NEXT_POS: Final[dict[Direction | None, tuple[int, int]]] = {
+NEXT_POS: Final[dict[Direction, tuple[int, int]]] = {
   'up': (0, 1),
   'right': (1, 0),
   'down': (0, -1),
   'left': (-1, 0),
-  None: (0, 0),
+}
+
+OPPOSITE_DIR: Final[dict[Direction, Direction]] = {
+  'up': 'down',
+  'right': 'left',
+  'down': 'up',
+  'left': 'right'
 }
 
 
@@ -117,6 +129,9 @@ class Bitset2D:
       x = self.width - (idx % self.width) - 1
       yield x, y
 
+  def clear(self) -> None:
+    self.data = 0
+
   def len(self) -> int:
     return self.data.bit_count()
 
@@ -128,6 +143,91 @@ class Map:
 
   ghost_house_start: tuple[int, int]
   ghost_house_end: tuple[int, int]
+
+
+class SearchAlgorithm(Protocol):
+  @classmethod
+  @abstractmethod
+  def new(cls, state: GameState) -> Self: ...
+
+  @abstractmethod
+  def search(self, ghost: Ghost, state: GameState) -> Direction: ...
+
+
+@dataclass(slots=True)
+class GreedyBestFirstSearch(SearchAlgorithm):
+  ghosts: Bitset2D
+
+  @classmethod
+  def new(cls, state: GameState) -> Self:
+    return cls(
+      ghosts=Bitset2D(width=state.width, height=state.height)
+    )
+
+  def search(self, ghost: Ghost, state: GameState) -> Direction:
+    self.ghosts.clear()
+
+    for other_ghost in state.ghosts:
+      if other_ghost == ghost:
+        continue
+
+      x, y = other_ghost.pos
+      dx, dy = NEXT_POS[other_ghost.dir]
+      self.ghosts.add(x, y)
+      self.ghosts.add(x + dx, y + dy)
+
+    x, y = ghost.pos
+    goal_x, goal_y = state.pacman.pos
+
+    best_d: int | None = None
+    result: Direction | None = None
+
+    for direction, (dx, dy) in NEXT_POS.items():
+      next_x, next_y = x + dx, y + dy
+
+      if next_x < 0 or next_x >= state.width:
+        continue
+
+      if next_y < 0 or next_y >= state.height:
+        continue
+
+      if self.ghosts.get(next_x, next_y):
+        continue
+
+      if state.map.walls.get(next_x, next_y):
+        continue
+
+      if direction is OPPOSITE_DIR[ghost.dir]:
+        continue
+
+      dx = goal_x - next_x
+      dy = goal_y - next_y
+
+      d = dx * dx + dy * dy
+      if best_d is None or best_d > d:
+        best_d = d
+        result = direction
+
+    return result or OPPOSITE_DIR[ghost.dir]
+
+
+@dataclass(slots=True)
+class Ghost:
+  color: tuple[int, int, int, int]
+  pos: tuple[int, int]
+  dir: Direction
+  algorithm: SearchAlgorithm
+  frame: float = 0
+
+  def update(self, dt: float, state: GameState):
+    self.frame += dt * Config.TPS
+    if self.frame >= 1:
+      x, y = self.pos
+      dx, dy = NEXT_POS[self.dir]
+
+      self.pos = (x + dx, y + dy)
+      self.dir = self.algorithm.search(self, state)
+      self.frame = 0
 
 
 @dataclass(slots=True)
@@ -213,6 +313,36 @@ class GameState:
 
   score: int = 0
   removed_coins: list[tuple[int, int]] = field(default_factory=list)
+  ghosts: list[Ghost] = field(default_factory=list)
+
+  def add_ghosts(self):
+    self.ghosts.append(Ghost(
+      color=Config.BLINKY_COLOR,
+      pos=(1, self.height - 2),
+      dir='right',
+      algorithm=GreedyBestFirstSearch.new(self)
+    ))
+
+    self.ghosts.append(Ghost(
+      color=Config.PINKY_COLOR,
+      pos=(self.width - 2, self.height - 2),
+      dir='left',
+      algorithm=GreedyBestFirstSearch.new(self)
+    ))
+
+    self.ghosts.append(Ghost(
+      color=Config.INKY_COLOR,
+      pos=(1, 1),
+      dir='right',
+      algorithm=GreedyBestFirstSearch.new(self)
+    ))
+
+    self.ghosts.append(Ghost(
+      color=Config.CLYDE_COLOR,
+      pos=(self.width - 2, 1),
+      dir='left',
+      algorithm=GreedyBestFirstSearch.new(self)
+    ))
 
   @classmethod
   def from_file(cls, filename: str) -> Self:
@@ -269,7 +399,7 @@ class GameState:
           doors=doors,
           ghost_house_start=ghost_house_start,
           ghost_house_end=ghost_house_end,
-        )
+        ),
       )
 
 
@@ -444,6 +574,17 @@ class Renderer:
       batch=self.batch,
     )
 
+    self.ghosts = [
+      pyglet.shapes.Circle(
+        x=0,
+        y=0,
+        radius=Config.PX_PER_UNIT * 4 // 5,
+        color=ghost.color,
+        batch=self.batch
+      )
+      for ghost in state.ghosts
+    ]
+
     self.sidebar_background = pyglet.shapes.Rectangle(
       x=w * Config.PX_PER_UNIT,
       y=0,
@@ -499,13 +640,28 @@ class Renderer:
       self.pacman.y = (pacman_y * 2 + 1) * Config.PX_PER_UNIT // 2
     else:
       x, y = state.pacman.pos
-      dx, dy = NEXT_POS[state.pacman.dir]
+      if state.pacman.dir is not None:
+        dx, dy = NEXT_POS[state.pacman.dir]
 
-      tx = (x + dx * state.pacman.frame) * 2 + 1
-      ty = (y + dy * state.pacman.frame) * 2 + 1
+        tx = (x + dx * state.pacman.frame) * 2 + 1
+        ty = (y + dy * state.pacman.frame) * 2 + 1
 
-      self.pacman.x = tx * Config.PX_PER_UNIT // 2
-      self.pacman.y = ty * Config.PX_PER_UNIT // 2
+        self.pacman.x = tx * Config.PX_PER_UNIT // 2
+        self.pacman.y = ty * Config.PX_PER_UNIT // 2
+      else:
+        self.pacman.x = (x * 2 + 1) * Config.PX_PER_UNIT // 2
+        self.pacman.y = (y * 2 + 1) * Config.PX_PER_UNIT // 2
+
+  def render_ghosts(self, state: GameState) -> None:
+    for ghost, ghost_sprite in zip(state.ghosts, self.ghosts):
+      x, y = ghost.pos
+      dx, dy = NEXT_POS[ghost.dir]
+
+      tx = (x + dx * ghost.frame) * 2 + 1
+      ty = (y + dy * ghost.frame) * 2 + 1
+
+      ghost_sprite.x = tx * Config.PX_PER_UNIT // 2
+      ghost_sprite.y = ty * Config.PX_PER_UNIT // 2
 
   def render_ui(self, state: GameState) -> None:
     self.score_label.text = f"Score: {state.score}"
@@ -513,12 +669,14 @@ class Renderer:
   def render(self, state: GameState) -> None:
     self.render_coins(state)
     self.render_pacman(state)
+    self.render_ghosts(state)
     self.render_ui(state)
     self.batch.draw()
 
 
 def main():
   state = GameState.from_file('./map.txt')
+  state.add_ghosts()
 
   window = pyglet.window.Window(
     width=Config.PX_PER_UNIT * state.width + Config.SIDEBAR_WIDTH,
@@ -557,6 +715,8 @@ def main():
     if fps_counter.update(dt):
       renderer.fps_counter.text = f"Frame rate: {fps_counter.fps} FPS"
     state.pacman.update(dt, state)
+    for ghost in state.ghosts:
+      ghost.update(dt, state)
 
     window.clear()
     renderer.render(state)
