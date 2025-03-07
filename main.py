@@ -14,11 +14,17 @@ class Config:
   PX_PER_UNIT: Final = 24
   COIN_RADIUS: Final = 4
   PELLET_RADIUS: Final = 8
+  HEADER_HEIGHT: Final = 64
+  SIDEBAR_WIDTH: Final = 512
+
   COIN_COLOR: Final = (255, 184, 151, 255)
   PATH_COLOR: Final = (0, 0, 0, 255)
   WALL_COLOR: Final = (33, 33, 222, 255)
   DOOR_COLOR: Final = COIN_COLOR
   PACMAN_COLOR: Final = (255, 255, 0, 255)
+
+  SIDEBAR_BG: Final = (18, 18, 18, 255)
+
   TPS: Final = 4
 
 
@@ -210,7 +216,7 @@ class GameState:
           if tile == '-':
             doors.add(x, y)
 
-          if line[x:x + 2] == 'SS':
+          if line[x:x + 2] == 'PP':
             pacman_pos = (x, y)
 
           if tile == '+':
@@ -255,12 +261,34 @@ class Renderer:
     self.batch = pyglet.graphics.Batch()
     self.background = pyglet.graphics.Group(0)
     self.foreground = pyglet.graphics.Group(1)
+    self.sidebar = pyglet.graphics.Group(2)
 
     self.coins: list[pyglet.shapes.Circle] = []
     self.pellets: list[pyglet.shapes.Circle] = []
 
     w = game_map.walls.width
     h = game_map.walls.height
+
+    self.score_label = pyglet.text.Label(
+      'Score: 0',
+      font_size=Config.HEADER_HEIGHT // 3,
+      x=w * Config.PX_PER_UNIT // 2,
+      y=h * Config.PX_PER_UNIT + Config.HEADER_HEIGHT // 2,
+      color=Config.PACMAN_COLOR,
+      anchor_x='center',
+      anchor_y='center',
+      batch=self.batch,
+    )
+
+    self.sidebar_background = pyglet.shapes.Rectangle(
+      x=w * Config.PX_PER_UNIT,
+      y=0,
+      width=Config.SIDEBAR_WIDTH,
+      height=h * Config.PX_PER_UNIT + Config.HEADER_HEIGHT,
+      color=Config.SIDEBAR_BG,
+      batch=self.batch,
+      group=self.sidebar,
+    )
 
     res = Config.PX_PER_UNIT
 
@@ -285,39 +313,47 @@ class Renderer:
         if game_map.walls.get(x, y):
           if x - 1 >= 0 and not game_map.walls.get(x - 1, y):
             if y - 1 >= 0 and not game_map.walls.get(x, y - 1):
-              for i in range(road_pad, road_pad + road_pad):
-                for j in range(road_pad, road_pad + road_pad):
-                  di = road_pad + road_pad - i
-                  dj = road_pad + road_pad - j
+              li, ri = road_pad, road_pad + road_pad
+              lj, rj = road_pad, road_pad + road_pad
 
-                  if di * di + dj * dj > road_pad * road_pad:
-                    rgba_array[y, x, i, j] = Config.PATH_COLOR
+              di = ri - np.arange(li, ri).reshape(1, -1)
+              dj = rj - np.arange(lj, rj).reshape(-1, 1)
+
+              mask = di * di + dj * dj > road_pad * road_pad
+              rgba_array[y, x, li:ri, lj:rj][mask] = Config.PATH_COLOR
+
             if y + 1 < h and not game_map.walls.get(x, y + 1):
-              for i in range(res - road_pad - road_pad, res - road_pad):
-                for j in range(road_pad, road_pad + road_pad):
-                  di = i - (res - road_pad - road_pad) + 1
-                  dj = road_pad + road_pad - j
-                  if di * di + dj * dj > road_pad * road_pad:
-                    rgba_array[y, x, i, j] = Config.PATH_COLOR
+              li, ri = res - road_pad - road_pad, res - road_pad
+              lj, rj = road_pad, road_pad + road_pad
+
+              di = ri - np.arange(li, ri).reshape(1, -1)
+              dj = np.arange(lj, rj).reshape(-1, 1) - lj + 1
+
+              mask = di * di + dj * dj > road_pad * road_pad
+              rgba_array[y, x, li:ri, lj:rj][mask] = Config.PATH_COLOR
 
           if x + 1 < w and not game_map.walls.get(x + 1, y):
             if y - 1 >= 0 and not game_map.walls.get(x, y - 1):
-              for i in range(road_pad, road_pad + road_pad):
-                for j in range(res - road_pad - road_pad, res - road_pad):
-                  di = road_pad + road_pad - i
-                  dj = j - (res - road_pad - road_pad) + 1
-                  if di * di + dj * dj > road_pad * road_pad:
-                    rgba_array[y, x, i, j] = Config.PATH_COLOR
+              li, ri = road_pad, road_pad + road_pad
+              lj, rj = res - road_pad - road_pad, res - road_pad
+
+              di = np.arange(li, ri).reshape(1, -1) - li + 1
+              dj = rj - np.arange(lj, rj).reshape(-1, 1)
+
+              mask = di * di + dj * dj > road_pad * road_pad
+              rgba_array[y, x, li:ri, lj:rj][mask] = Config.PATH_COLOR
 
             if y + 1 < h and not game_map.walls.get(x, y + 1):
-              for i in range(res - road_pad - road_pad, res - road_pad):
-                for j in range(res - road_pad - road_pad, res - road_pad):
-                  di = i - (res - road_pad - road_pad) + 1
-                  dj = j - (res - road_pad - road_pad) + 1
-                  if di * di + dj * dj > road_pad * road_pad:
-                    rgba_array[y, x, i, j] = Config.PATH_COLOR
+              li, ri = res - road_pad - road_pad, res - road_pad
+              lj, rj = res - road_pad - road_pad, res - road_pad
+
+              dj = np.arange(li, ri).reshape(1, -1) - li + 1
+              di = np.arange(lj, rj).reshape(-1, 1) - lj + 1
+
+              mask = di * di + dj * dj > road_pad * road_pad
+              rgba_array[y, x, li:ri, lj:rj][mask] = Config.PATH_COLOR
         else:
-          rgba_array[y, x, :, :] = Config.PATH_COLOR
+          rgba_array[y, x] = Config.PATH_COLOR
 
           if x - 1 >= 0:
             pad = door_pad if game_map.doors.get(x - 1, y) else road_pad
@@ -334,41 +370,45 @@ class Renderer:
 
           if x - 1 >= 0:
             if y - 1 >= 0:
-              for i in range(res - road_pad, res):
-                for j in range(res - road_pad, res):
-                  di = res - i
-                  dj = res - j
+              li, ri = res - road_pad, res
+              lj, rj = res - road_pad, res
 
-                  if di * di + dj * dj <= road_pad * road_pad:
-                    rgba_array[y - 1, x - 1, i, j, :] = Config.PATH_COLOR
+              di = ri - np.arange(li, ri).reshape(1, -1)
+              dj = rj - np.arange(lj, rj).reshape(-1, 1)
+
+              mask = di * di + dj * dj <= road_pad * road_pad
+              rgba_array[y - 1, x - 1, li:ri, lj:rj][mask] = Config.PATH_COLOR
 
             if y + 1 < h:
-              for i in range(road_pad):
-                for j in range(res - road_pad, res):
-                  di = i + 1
-                  dj = res - j
+              li, ri = 0, road_pad
+              lj, rj = res - road_pad, res
 
-                  if di * di + dj * dj <= road_pad * road_pad:
-                    rgba_array[y + 1, x - 1, i, j, :] = Config.PATH_COLOR
+              di = ri - np.arange(li, ri).reshape(1, -1)
+              dj = np.arange(lj, rj).reshape(-1, 1) - lj + 1
+
+              mask = di * di + dj * dj <= road_pad * road_pad
+              rgba_array[y + 1, x - 1, li:ri, lj:rj][mask] = Config.PATH_COLOR
 
           if x + 1 < w:
             if y - 1 >= 0:
-              for i in range(res - road_pad, res):
-                for j in range(road_pad):
-                  di = res - i
-                  dj = j + 1
+              li, ri = res - road_pad, res
+              lj, rj = 0, road_pad
 
-                  if di * di + dj * dj <= road_pad * road_pad:
-                    rgba_array[y - 1, x + 1, i, j, :] = Config.PATH_COLOR
+              di = np.arange(li, ri).reshape(1, -1) - li + 1
+              dj = rj - np.arange(lj, rj).reshape(-1, 1)
+
+              mask = di * di + dj * dj <= road_pad * road_pad
+              rgba_array[y - 1, x + 1, li:ri, lj:rj][mask] = Config.PATH_COLOR
 
             if y + 1 < h:
-              for i in range(road_pad):
-                for j in range(road_pad):
-                  di = i + 1
-                  dj = j + 1
+              li, ri = 0, road_pad
+              lj, rj = 0, road_pad
 
-                  if di * di + dj * dj <= road_pad * road_pad:
-                    rgba_array[y + 1, x + 1, i, j, :] = Config.PATH_COLOR
+              di = np.arange(li, ri).reshape(1, -1) - li + 1
+              dj = np.arange(lj, rj).reshape(-1, 1) - lj + 1
+
+              mask = di * di + dj * dj <= road_pad * road_pad
+              rgba_array[y + 1, x + 1, li:ri, lj:rj][mask] = Config.PATH_COLOR
 
     rgba_bytes = rgba_array.transpose((0, 2, 1, 3, 4)).tobytes()
 
@@ -437,6 +477,8 @@ class Renderer:
         batch=self.batch
       ))
 
+    self.score_label.text = f"Score: {state.score}"
+
     for (x, y), coin in zip(state.coins.iter(), self.coins):
       coin.x = (x * 2 + 1) * Config.PX_PER_UNIT // 2
       coin.y = (y * 2 + 1) * Config.PX_PER_UNIT // 2
@@ -453,8 +495,8 @@ def main():
   state = GameState.from_file('./map.txt')
 
   window = pyglet.window.Window(
-    width=Config.PX_PER_UNIT * state.width + 512,
-    height=Config.PX_PER_UNIT * state.height + 64,
+    width=Config.PX_PER_UNIT * state.width + Config.SIDEBAR_WIDTH,
+    height=Config.PX_PER_UNIT * state.height + Config.HEADER_HEIGHT,
   )
 
   keys = pyglet.window.key.KeyStateHandler()
@@ -468,6 +510,16 @@ def main():
       pyglet.window.key.RIGHT: 'right',
       pyglet.window.key.DOWN: 'down',
       pyglet.window.key.LEFT: 'left',
+
+      pyglet.window.key.W: 'up',
+      pyglet.window.key.D: 'right',
+      pyglet.window.key.S: 'down',
+      pyglet.window.key.A: 'left',
+
+      pyglet.window.key.K: 'up',
+      pyglet.window.key.L: 'right',
+      pyglet.window.key.J: 'down',
+      pyglet.window.key.H: 'left',
     }
 
     direction = keymap.get(symbol)
