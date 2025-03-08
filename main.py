@@ -197,7 +197,7 @@ class GreedyBestFirstSearch(SearchAlgorithm):
       if state.map.walls.get(next_x, next_y):
         continue
 
-      if direction is OPPOSITE_DIR[ghost.dir]:
+      if direction == OPPOSITE_DIR[ghost.dir]:
         continue
 
       dx = goal_x - next_x
