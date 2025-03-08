@@ -151,19 +151,21 @@ class SearchAlgorithm(Protocol):
   def new(cls, state: GameState) -> Self: ...
 
   @abstractmethod
-  def search(self, ghost: Ghost, state: GameState) -> dict[Direction, int]: ...
+  def search(
+    self,
+    ghost: Ghost,
+    dirs: list[Direction],
+    state: GameState,
+  ) -> Direction: ...
 
   def next_dir(self, ghost: Ghost, state: GameState) -> Direction:
-    best_priority: int | None = None
-    best_direction: Direction | None = None
-
     ghost_x, ghost_y = ghost.pos
+    directions: list[Direction] = []
 
-    for direction, priority in self.search(ghost, state).items():
+    for direction, (x, y) in NEXT_POS.items():
       if direction == OPPOSITE_DIR[ghost.dir]:
         continue
 
-      x, y = NEXT_POS[direction]
       next_x, next_y = ghost_x + x, ghost_y + y
 
       if next_x < 0 or next_x >= state.width:
@@ -194,11 +196,12 @@ class SearchAlgorithm(Protocol):
       if discard:
         continue
 
-      if best_priority is None or best_priority > priority:
-        best_priority = priority
-        best_direction = direction
+      directions.append(direction)
 
-    return best_direction or OPPOSITE_DIR[ghost.dir]
+    if len(directions) == 0:
+      return OPPOSITE_DIR[ghost.dir]
+
+    return self.search(ghost, directions, state)
 
 
 @dataclass(slots=True)
@@ -210,25 +213,45 @@ class GreedyBestFirstSearch(SearchAlgorithm):
     return cls()
 
   @staticmethod
-  def squared_distance(p0: tuple[int, int], p1: tuple[int, int]) -> int:
+  def squared_distance(
+    p0: tuple[int, int],
+    direction: Direction,
+    p1: tuple[int, int],
+  ) -> int:
     x0, y0 = p0
     x1, y1 = p1
 
-    dx = x1 - x0
-    dy = y1 - y0
+    xd, yd = NEXT_POS[direction]
+    dx = x0 + xd - x1
+    dy = y0 + yd - y1
 
     return dx * dx + dy * dy
 
-  def search(self, ghost: Ghost, state: GameState) -> dict[Direction, int]:
-    initial_x, initial_y = ghost.pos
+  def search(
+    self,
+    ghost: Ghost,
+    dirs: list[Direction],
+    state: GameState,
+  ) -> Direction:
+    best_direction = dirs.pop()
+    best_distance = GreedyBestFirstSearch.squared_distance(
+      ghost.pos,
+      best_direction,
+      state.pacman.pos
+    )
 
-    return {
-      direction: GreedyBestFirstSearch.squared_distance(
-        (initial_x + x, initial_y + y),
+    for direction in dirs:
+      distance = GreedyBestFirstSearch.squared_distance(
+        ghost.pos,
+        direction,
         state.pacman.pos
       )
-      for direction, (x, y) in NEXT_POS.items()
-    }
+
+      if distance < best_distance:
+        best_direction = direction
+        best_distance = distance
+
+    return best_direction
 
 
 @dataclass(slots=True)
