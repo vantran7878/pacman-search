@@ -151,39 +151,20 @@ class SearchAlgorithm(Protocol):
   def new(cls, state: GameState) -> Self: ...
 
   @abstractmethod
-  def search(self, ghost: Ghost, state: GameState) -> Direction: ...
+  def search(self, ghost: Ghost, state: GameState) -> dict[Direction, int]: ...
 
+  def next_dir(self, ghost: Ghost, state: GameState) -> Direction:
+    best_priority: int | None = None
+    best_direction: Direction | None = None
 
-@dataclass(slots=True)
-class GreedyBestFirstSearch(SearchAlgorithm):
-  ghosts: Bitset2D
+    ghost_x, ghost_y = ghost.pos
 
-  @classmethod
-  def new(cls, state: GameState) -> Self:
-    return cls(
-      ghosts=Bitset2D(width=state.width, height=state.height)
-    )
-
-  def search(self, ghost: Ghost, state: GameState) -> Direction:
-    self.ghosts.clear()
-
-    for other_ghost in state.ghosts:
-      if other_ghost == ghost:
+    for direction, priority in self.search(ghost, state).items():
+      if direction == OPPOSITE_DIR[ghost.dir]:
         continue
 
-      x, y = other_ghost.pos
-      dx, dy = NEXT_POS[other_ghost.dir]
-      self.ghosts.add(x, y)
-      self.ghosts.add(x + dx, y + dy)
-
-    x, y = ghost.pos
-    goal_x, goal_y = state.pacman.pos
-
-    best_d: int | None = None
-    result: Direction | None = None
-
-    for direction, (dx, dy) in NEXT_POS.items():
-      next_x, next_y = x + dx, y + dy
+      x, y = NEXT_POS[direction]
+      next_x, next_y = ghost_x + x, ghost_y + y
 
       if next_x < 0 or next_x >= state.width:
         continue
@@ -191,24 +172,63 @@ class GreedyBestFirstSearch(SearchAlgorithm):
       if next_y < 0 or next_y >= state.height:
         continue
 
-      if self.ghosts.get(next_x, next_y):
-        continue
-
       if state.map.walls.get(next_x, next_y):
         continue
 
-      if direction == OPPOSITE_DIR[ghost.dir]:
+      discard = False
+      for other_ghost in state.ghosts:
+        if other_ghost is ghost:
+          continue
+
+        if (next_x, next_y) == other_ghost.pos:
+          discard = True
+          break
+
+        other_x, other_y = other_ghost.pos
+        other_dx, other_dy = NEXT_POS[other_ghost.dir]
+
+        if (next_x, next_y) == (other_x + other_dx, other_y + other_dy):
+          discard = True
+          break
+
+      if discard:
         continue
 
-      dx = goal_x - next_x
-      dy = goal_y - next_y
+      if best_priority is None or best_priority > priority:
+        best_priority = priority
+        best_direction = direction
 
-      d = dx * dx + dy * dy
-      if best_d is None or best_d > d:
-        best_d = d
-        result = direction
+    return best_direction or OPPOSITE_DIR[ghost.dir]
 
-    return result or OPPOSITE_DIR[ghost.dir]
+
+@dataclass(slots=True)
+class GreedyBestFirstSearch(SearchAlgorithm):
+
+  @classmethod
+  def new(cls, state: GameState) -> Self:
+    _ = state
+    return cls()
+
+  @staticmethod
+  def squared_distance(p0: tuple[int, int], p1: tuple[int, int]) -> int:
+    x0, y0 = p0
+    x1, y1 = p1
+
+    dx = x1 - x0
+    dy = y1 - y0
+
+    return dx * dx + dy * dy
+
+  def search(self, ghost: Ghost, state: GameState) -> dict[Direction, int]:
+    initial_x, initial_y = ghost.pos
+
+    return {
+      direction: GreedyBestFirstSearch.squared_distance(
+        (initial_x + x, initial_y + y),
+        state.pacman.pos
+      )
+      for direction, (x, y) in NEXT_POS.items()
+    }
 
 
 @dataclass(slots=True)
@@ -226,7 +246,7 @@ class Ghost:
       dx, dy = NEXT_POS[self.dir]
 
       self.pos = (x + dx, y + dy)
-      self.dir = self.algorithm.search(self, state)
+      self.dir = self.algorithm.next_dir(self, state)
       self.frame = 0
 
 
