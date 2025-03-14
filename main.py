@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass, field
+
+import heapq
 from typing import Self, Final, Literal, Protocol
 from collections.abc import Generator
+from collections import deque
 
 import pyglet  # type: ignore
 import numpy as np
@@ -254,6 +257,176 @@ class GreedyBestFirstSearch(SearchAlgorithm):
     return best_direction
 
 
+type GraphCostType = dict[tuple[int, int], dict[tuple[int, int], int]]
+
+
+def undel_neighbor(state: GameState) -> list[tuple[int, int]]:
+  dirs: list[Direction] = ['up', 'down', 'left', 'right']
+  w = state.width
+  h = state.height
+
+  v: list[tuple[int, int]] = []
+  for y in range(h):
+    for x in range(w):
+      if state.map.walls.get(x, y):
+        continue
+      count: int = 0
+      for direction in dirs:
+        dx, dy = NEXT_POS[direction]
+        next_x: int = x + dx
+        next_y: int = y + dy
+        if (
+            next_x < 0 or next_x >= w or
+            next_y < 0 or next_y >= h or
+            state.map.walls.get(next_x, next_y)
+            ):
+          continue
+        count += 1
+      if count != 2:
+        v.append((x, y))
+  return v
+
+
+def jps_graph(
+  state: GameState
+ ) -> GraphCostType:
+  dirs: list[Direction] = ['up', 'down', 'left', 'right']
+  cost: GraphCostType = {}
+  h = state.height
+  w = state.width
+
+  v: list[tuple[int, int]] = undel_neighbor(state)
+  for y in range(h):
+    for x in range(w):
+      if state.map.walls.get(x, y):
+        continue
+
+      queue: deque[tuple[int, int, int]] = deque([(x, y, 0)])
+      visited = {(x, y)}
+
+      while queue:
+        cx, cy, dist = queue.popleft()
+        if (cx, cy) in v and (cx, cy) != (x, y):
+          if (x, y) not in cost:
+            cost[(x, y)] = {}
+          cost[(x, y)][(cx, cy)] = dist
+          continue
+        visited.add((cx, cy))
+
+        for direction in dirs:
+          dx, dy = NEXT_POS[direction]
+          next_x, next_y = cx + dx, cy + dy
+          if next_x < 0 or next_x >= w:
+            continue
+          if next_y < 0 or next_y >= h:
+            continue
+          if state.map.walls.get(next_x, next_y):
+            continue
+          if (next_x, next_y) in visited:
+            continue
+          if (next_x, next_y) in v and (next_x, next_y) != (x, y):
+            if (x, y) not in cost:
+              cost[(x, y)] = {}
+            cost[(x, y)][(next_x, next_y)] = dist + 1
+          else:
+            queue.append((next_x, next_y, dist + 1))
+
+  return cost
+
+
+@dataclass(slots=True)
+class UniformCostSearch(SearchAlgorithm):
+  graph_cost: GraphCostType = field(default_factory=dict)
+
+  @classmethod
+  def new(cls, state: GameState) -> Self:
+    instance = cls()
+    instance.graph_cost = jps_graph(state)
+    return instance
+
+  def search(
+    self,
+    ghost: Ghost,
+    dirs: list[Direction],
+    state: GameState,
+  ) -> Direction:
+    pq: list[tuple[int, tuple[int, int], Direction]] = []
+    costs: dict[tuple[int, int], int] = {}
+    initial_x, initial_y = ghost.pos
+
+    goal_x, goal_y = state.pacman.pos
+
+    if goal_x == -1:
+      goal_x = 0
+
+    if goal_x == state.width:
+      goal_x = state.width - 1
+
+    distances = self.graph_cost
+    costs[(initial_x, initial_y)] = 0
+    best_direction: Direction = dirs[0]
+
+    for direction in dirs:
+      dx, dy = NEXT_POS[direction]
+      nx, ny = initial_x + dx, initial_y + dy
+      if (
+        nx < 0 or nx >= state.width or
+        ny < 0 or ny >= state.height or
+        state.map.walls.get(nx, ny)
+      ):
+        continue
+      heapq.heappush(pq, (1, (nx, ny), direction))
+      costs[(nx, ny)] = 1
+
+      if (nx, ny) == (goal_x, goal_y):
+        continue
+
+      if (nx, ny) in distances[(goal_x, goal_y)]:
+        cost_goal = 1 + distances[(goal_x, goal_y)][(nx, ny)]
+        if (
+          (goal_x, goal_y) not in costs or
+          cost_goal < costs[(goal_x, goal_y)]
+        ):
+          costs[(goal_x, goal_y)] = cost_goal
+          heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
+
+      for (cx, cy), dist in distances[(goal_x, goal_y)].items():
+        if (cx, cy) in distances[(nx, ny)]:
+          cost_n_c = distances[(nx, ny)][(cx, cy)]
+          cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
+          cost_goal = cost_n_c - cost_g_c
+          if cost_goal < 0:
+            continue
+          if (
+            (goal_x, goal_y) not in costs or
+            cost_goal < costs[(goal_x, goal_y)]
+          ):
+            costs[(goal_x, goal_y)] = cost_goal
+            heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
+
+    while pq:
+      cost, (x, y), direction = heapq.heappop(pq)
+      if (x, y) in costs and cost != costs[(x, y)]:
+        continue
+      if (x, y) == state.pacman.pos:
+        return direction
+      for (nx, ny), (dist) in distances[(x, y)].items():
+        new_cost = cost + dist
+        if (nx, ny) not in costs or new_cost < costs[(nx, ny)]:
+          costs[(nx, ny)] = new_cost
+          heapq.heappush(pq, (new_cost, (nx, ny), direction))
+          if (nx, ny) in distances[(goal_x, goal_y)]:
+            cost_goal = cost + dist + distances[(goal_x, goal_y)][(nx, ny)]
+            if (
+              (goal_x, goal_y) not in costs or
+              cost_goal < costs[(goal_x, goal_y)]
+            ):
+              costs[(goal_x, goal_y)] = cost_goal
+              heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
+
+    return best_direction
+
+
 @dataclass(slots=True)
 class Ghost:
   color: tuple[int, int, int, int]
@@ -377,7 +550,7 @@ class GameState:
       color=Config.INKY_COLOR,
       pos=(1, 1),
       dir='right',
-      algorithm=GreedyBestFirstSearch.new(self)
+      algorithm=UniformCostSearch.new(self)
     ))
 
     self.ghosts.append(Ghost(
@@ -450,8 +623,8 @@ class Renderer:
   def __init__(self, state: GameState) -> None:
     self.batch = pyglet.graphics.Batch()
 
-    w = state.map.walls.width
-    h = state.map.walls.height
+    w = state.width
+    h = state.height
 
     res = Config.PX_PER_UNIT
 
