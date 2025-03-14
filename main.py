@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass, field
+
+import heapq
 from typing import Self, Final, Literal, Protocol
 from collections.abc import Generator
 from collections import deque
 
-import heapq
 import pyglet  # type: ignore
 import numpy as np
 
@@ -261,8 +262,8 @@ type GraphCostType = dict[tuple[int, int], dict[tuple[int, int], int]]
 
 def undel_neighbor(state: GameState) -> list[tuple[int, int]]:
   dirs: list[Direction] = ['up', 'down', 'left', 'right']
-  w = state.map.walls.width
-  h = state.map.walls.height
+  w = state.width
+  h = state.height
 
   v: list[tuple[int, int]] = []
   for y in range(h):
@@ -291,8 +292,8 @@ def jps_graph(
  ) -> GraphCostType:
   dirs: list[Direction] = ['up', 'down', 'left', 'right']
   cost: GraphCostType = {}
-  h = state.map.walls.height
-  w = state.map.walls.width
+  h = state.height
+  w = state.width
 
   v: list[tuple[int, int]] = undel_neighbor(state)
   for y in range(h):
@@ -369,10 +370,10 @@ class UniformCostSearch(SearchAlgorithm):
       dx, dy = NEXT_POS[direction]
       nx, ny = initial_x + dx, initial_y + dy
       if (
-           nx < 0 or nx >= state.width or
-           ny < 0 or ny >= state.height or
-           state.map.walls.get(nx, ny)
-          ):
+        nx < 0 or nx >= state.width or
+        ny < 0 or ny >= state.height or
+        state.map.walls.get(nx, ny)
+      ):
         continue
       heapq.heappush(pq, (1, (nx, ny), direction))
       costs[(nx, ny)] = 1
@@ -383,9 +384,9 @@ class UniformCostSearch(SearchAlgorithm):
       if (nx, ny) in distances[(goal_x, goal_y)]:
         cost_goal = 1 + distances[(goal_x, goal_y)][(nx, ny)]
         if (
-            (goal_x, goal_y) not in costs or
-            cost_goal < costs[(goal_x, goal_y)]
-            ):
+          (goal_x, goal_y) not in costs or
+          cost_goal < costs[(goal_x, goal_y)]
+        ):
           costs[(goal_x, goal_y)] = cost_goal
           heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
 
@@ -397,9 +398,9 @@ class UniformCostSearch(SearchAlgorithm):
           if cost_goal < 0:
             continue
           if (
-              (goal_x, goal_y) not in costs or
-              cost_goal < costs[(goal_x, goal_y)]
-              ):
+            (goal_x, goal_y) not in costs or
+            cost_goal < costs[(goal_x, goal_y)]
+          ):
             costs[(goal_x, goal_y)] = cost_goal
             heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
 
@@ -417,9 +418,9 @@ class UniformCostSearch(SearchAlgorithm):
           if (nx, ny) in distances[(goal_x, goal_y)]:
             cost_goal = cost + dist + distances[(goal_x, goal_y)][(nx, ny)]
             if (
-                (goal_x, goal_y) not in costs or
-                cost_goal < costs[(goal_x, goal_y)]
-                ):
+              (goal_x, goal_y) not in costs or
+              cost_goal < costs[(goal_x, goal_y)]
+            ):
               costs[(goal_x, goal_y)] = cost_goal
               heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
 
@@ -622,8 +623,8 @@ class Renderer:
   def __init__(self, state: GameState) -> None:
     self.batch = pyglet.graphics.Batch()
 
-    w = state.map.walls.width
-    h = state.map.walls.height
+    w = state.width
+    h = state.height
 
     res = Config.PX_PER_UNIT
 
