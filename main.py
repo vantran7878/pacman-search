@@ -789,9 +789,6 @@ class AStarSearch(SearchAlgorithm):
       heapq.heappush(pq, (f, g, (nx, ny), direction))
       costs[(nx, ny)] = g
 
-      if (nx, ny) == goal:
-        continue
-
       if goal in distances and (nx, ny) in distances[goal]:
         cost_goal = 1 + distances[goal][(nx, ny)]
         if goal not in costs or cost_goal < costs[goal]:
@@ -799,18 +796,20 @@ class AStarSearch(SearchAlgorithm):
           f_goal = cost_goal + heuristic(goal, goal)
           heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
 
-      if goal in distances:
-        for (cx, cy) in distances[(goal_x, goal_y)]:
-          if (nx, ny) in distances and (cx, cy) in distances[(nx, ny)]:
-            cost_n_c = distances[(nx, ny)][(cx, cy)]
-            cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
-            cost_goal = cost_n_c - cost_g_c
-            if cost_goal < 0:
-              continue
-            if goal not in costs or cost_goal < costs[goal]:
-              costs[goal] = cost_goal
-              f_goal = cost_goal + heuristic(goal, goal)
-              heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
+      if (nx, ny) == (goal_x, goal_y):
+          continue
+
+      for (cx, cy) in distances[(goal_x, goal_y)]:
+        if (cx, cy) in distances[(nx, ny)]:
+          cost_n_c = distances[(nx, ny)][(cx, cy)]
+          cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
+          cost_goal = cost_n_c - cost_g_c
+          if cost_goal < 0:
+            continue
+          if goal not in costs or cost_goal < costs[goal]:
+            costs[goal] = cost_goal
+            f_goal = cost_goal + heuristic(goal, goal)
+            heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
 
     # Main A* loop.
     while pq:
@@ -821,19 +820,26 @@ class AStarSearch(SearchAlgorithm):
         return direction
       if (x, y) not in distances:
         continue
+
+      for (cx, cy) in distances[(goal_x, goal_y)]:
+        if (cx, cy) in distances[(x, y)]:
+          cost_n_c = distances[(x, y)][(cx, cy)]
+          cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
+          cost_goal = cost_n_c - cost_g_c
+          if cost_goal < 0:
+            continue
+          if goal not in costs or cost_goal < costs[goal]:
+            costs[goal] = cost_goal
+            f_goal = cost_goal + heuristic(goal, goal)
+            heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
+
       for (nx, ny), edge_cost in distances[(x, y)].items():
         new_cost = g + edge_cost
+
         if (nx, ny) not in costs or new_cost < costs[(nx, ny)]:
           costs[(nx, ny)] = new_cost
           new_f = new_cost + heuristic((nx, ny), goal)
           heapq.heappush(pq, (new_f, new_cost, (nx, ny), direction))
-          # Also check if this node connects directly to goal.
-          if goal in distances and (nx, ny) in distances[goal]:
-            cost_goal = new_cost + distances[goal][(nx, ny)]
-            if goal not in costs or cost_goal < costs[goal]:
-              costs[goal] = cost_goal
-              f_goal = cost_goal + heuristic(goal, goal)
-              heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
     return best_direction
 
 
