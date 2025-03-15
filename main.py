@@ -630,7 +630,7 @@ def get_jps_graph(
         continue
 
       queue: deque[tuple[int, int, int]] = deque([(x, y, 0)])
-      visited = Bitset2D(x, y)
+      visited = Bitset2D(w, h)
       visited.add(x, y)
 
       while queue:
@@ -967,7 +967,7 @@ class GameState:
       color=Config.CLYDE_COLOR,
       pos=(self.width - 2, 1),
       dir='left',
-      algorithm=GreedyBestFirstSearch.new(self)
+      algorithm=UniformCostSearch.new(self)
     ))
 
   @classmethod
