@@ -308,32 +308,47 @@ class BreadthFirstSearch(SearchAlgorithm):
     return dirs[0]
 
 
-@dataclass(slots=True)
-class DepthFirstSearch(SearchAlgorithm):
+def get_neighbors_node(
   jps_graph: dict[
     tuple[int, int],
     list[tuple[tuple[int, int], int, Direction]]
-  ] = field(default_factory=dict)
+  ],
+  state: GameState,
+  start_pos: tuple[int, int]
+) -> list[tuple[int, int]]:
+  initial_x, initial_y = start_pos
+  stack: deque[tuple[tuple[int, int], int]] = deque()
+  neighbors: list[tuple[int, int]] = []
+  visited = set([start_pos])
 
-  @classmethod
-  def new(cls, state: GameState) -> Self:
-    instance = cls()
-    instance.get_jump_point_graph(state)
-    return instance
+  for direction, (dx, dy) in NEXT_POS.items():
+    nx, ny = initial_x + dx, initial_y + dy
 
-  def get_neighbors_node(
-    self,
-    state: GameState,
-    start_pos: tuple[int, int]
-  ) -> list[tuple[int, int]]:
-    initial_x, initial_y = start_pos
-    stack: deque[tuple[tuple[int, int], int]] = deque()
-    neighbors: list[tuple[int, int]] = []
-    visited = set([start_pos])
+    if nx < 0 or nx >= state.width:
+      continue
+
+    if ny < 0 or ny >= state.height:
+      continue
+
+    if state.map.walls.get(nx, ny):
+      continue
+
+    stack.append(((nx, ny), 1))
+    if (nx, ny) not in jps_graph:
+      jps_graph[(nx, ny)] = [
+        ((initial_x, initial_y), 1, OPPOSITE_DIR[direction])
+      ]
+    else:
+      jps_graph[(nx, ny)].append(
+        ((initial_x, initial_y), 1, OPPOSITE_DIR[direction])
+      )
+
+  while stack:
+    (x, y), cost = stack.pop()
+    num_hallway = 0
 
     for direction, (dx, dy) in NEXT_POS.items():
-      nx, ny = initial_x + dx, initial_y + dy
-
+      nx, ny = x + dx, y + dy
       if nx < 0 or nx >= state.width:
         continue
 
@@ -343,20 +358,15 @@ class DepthFirstSearch(SearchAlgorithm):
       if state.map.walls.get(nx, ny):
         continue
 
-      stack.append(((nx, ny), 1))
-      if (nx, ny) not in self.jps_graph:
-        self.jps_graph[(nx, ny)] = [
-          ((initial_x, initial_y), 1, OPPOSITE_DIR[direction])
-        ]
-      else:
-        self.jps_graph[(nx, ny)].append(
-          ((initial_x, initial_y), 1, OPPOSITE_DIR[direction])
-        )
+      if (nx, ny) in visited:
+        continue
 
-    while stack:
-      (x, y), cost = stack.pop()
-      num_hallway = 0
+      num_hallway += 1
 
+    if num_hallway != 1:
+      neighbors.append((x, y))
+
+    else:
       for direction, (dx, dy) in NEXT_POS.items():
         nx, ny = x + dx, y + dy
         if nx < 0 or nx >= state.width:
@@ -371,89 +381,90 @@ class DepthFirstSearch(SearchAlgorithm):
         if (nx, ny) in visited:
           continue
 
-        num_hallway += 1
+        stack.append(((nx, ny), cost + 1))
 
-      if num_hallway != 1:
-        neighbors.append((x, y))
+        if (nx, ny) not in jps_graph:
+          jps_graph[(nx, ny)] = [
+            ((initial_x, initial_y), cost + 1, OPPOSITE_DIR[direction])
+          ]
+        else:
+          jps_graph[(nx, ny)].append(
+            ((initial_x, initial_y), cost + 1, OPPOSITE_DIR[direction])
+          )
 
-      else:
-        for direction, (dx, dy) in NEXT_POS.items():
-          nx, ny = x + dx, y + dy
-          if nx < 0 or nx >= state.width:
-            continue
-
-          if ny < 0 or ny >= state.height:
-            continue
-
-          if state.map.walls.get(nx, ny):
-            continue
-
-          if (nx, ny) in visited:
-            continue
-
-          stack.append(((nx, ny), cost + 1))
-
-          if (nx, ny) not in self.jps_graph:
-            self.jps_graph[(nx, ny)] = [
-              ((initial_x, initial_y), cost + 1, OPPOSITE_DIR[direction])
-            ]
-          else:
-            self.jps_graph[(nx, ny)].append(
-              ((initial_x, initial_y), cost + 1, OPPOSITE_DIR[direction])
-            )
-
-          break
-
-        visited.add((x, y))
-    return neighbors
-
-  def get_jump_point_graph(
-    self,
-    state: GameState
-  ) -> None:
-    visited_nodes: set[tuple[int, int]] = set()
-    initial_x, initial_y = state.pacman.pos
-
-    stack = deque([(initial_x, initial_y)])
-
-    # Finding first node
-    while stack:
-      x, y = stack.pop()
-      num_hallway = 0
-
-      for dx, dy in NEXT_POS.values():
-        nx, ny = x + dx, y + dy
-        if nx < 0 or nx >= state.width:
-          continue
-
-        if ny < 0 or ny >= state.height:
-          continue
-
-        if state.map.walls.get(nx, ny):
-          continue
-
-        stack.append((x + dx, y + dy))
-        num_hallway += 1
-
-      if num_hallway != 2:
-        stack.clear()
-        stack.append((x, y))
         break
 
-    while stack:
-      x, y = stack.pop()
-      if (x, y) in visited_nodes:
+      visited.add((x, y))
+  return neighbors
+
+
+def get_jump_point_graph(
+  state: GameState
+) -> dict[
+      tuple[int, int],
+      list[tuple[tuple[int, int], int, Direction]]
+    ]:
+  jps_graph: dict[
+    tuple[int, int],
+    list[tuple[tuple[int, int], int, Direction]]
+  ] = {}
+  visited_nodes: set[tuple[int, int]] = set()
+  initial_x, initial_y = state.pacman.pos
+
+  stack = deque([(initial_x, initial_y)])
+
+  # Finding first node
+  while stack:
+    x, y = stack.pop()
+    num_hallway = 0
+
+    for dx, dy in NEXT_POS.values():
+      nx, ny = x + dx, y + dy
+      if nx < 0 or nx >= state.width:
         continue
-      visited_nodes.add((x, y))
 
-      for node in DepthFirstSearch.get_neighbors_node(self, state, (x, y)):
-        stack.append(node)
+      if ny < 0 or ny >= state.height:
+        continue
 
-    order = ['up', 'right', 'down', 'left']
-    for key in self.jps_graph:
-      self.jps_graph[key] = sorted(
-        self.jps_graph[key], key=lambda x: order.index(x[2])
-      )
+      if state.map.walls.get(nx, ny):
+        continue
+
+      stack.append((x + dx, y + dy))
+      num_hallway += 1
+
+    if num_hallway != 2:
+      stack.clear()
+      stack.append((x, y))
+      break
+
+  while stack:
+    x, y = stack.pop()
+    if (x, y) in visited_nodes:
+      continue
+    visited_nodes.add((x, y))
+
+    for node in get_neighbors_node(jps_graph, state, (x, y)):
+      stack.append(node)
+
+  order: list[Direction] = ['up', 'right', 'down', 'left']
+  for key in jps_graph:
+    jps_graph[key] = sorted(
+      jps_graph[key], key=lambda x: order.index(x[2])
+    )
+
+  return jps_graph
+
+
+@dataclass(slots=True)
+class DepthFirstSearch(SearchAlgorithm):
+  jps_graph: dict[
+    tuple[int, int],
+    list[tuple[tuple[int, int], int, Direction]]
+  ]
+
+  @classmethod
+  def new(cls, state: GameState) -> Self:
+    return cls(jps_graph=get_jump_point_graph(state))
 
   def search(
     self,
@@ -601,7 +612,7 @@ def undel_neighbor(state: GameState) -> list[tuple[int, int]]:
   return v
 
 
-def jps_graph(
+def get_jps_graph(
   state: GameState
  ) -> GraphCostType:
   dirs: list[Direction] = ['up', 'down', 'left', 'right']
@@ -650,13 +661,11 @@ def jps_graph(
 
 @dataclass(slots=True)
 class UniformCostSearch(SearchAlgorithm):
-  graph_cost: GraphCostType = field(default_factory=dict)
+  graph_cost: GraphCostType
 
   @classmethod
   def new(cls, state: GameState) -> Self:
-    instance = cls()
-    instance.graph_cost = jps_graph(state)
-    return instance
+    return cls(graph_cost=get_jps_graph(state))
 
   def search(
     self,
@@ -692,11 +701,15 @@ class UniformCostSearch(SearchAlgorithm):
       heapq.heappush(pq, (1, (nx, ny), direction))
       costs[(nx, ny)] = 1
 
-      if (nx, ny) == (goal_x, goal_y):
+    while pq:
+      cost, (x, y), direction = heapq.heappop(pq)
+      if (x, y) in costs and cost != costs[(x, y)]:
         continue
+      if (x, y) == state.pacman.pos:
+        return direction
 
-      if (nx, ny) in distances[(goal_x, goal_y)]:
-        cost_goal = 1 + distances[(goal_x, goal_y)][(nx, ny)]
+      if (x, y) in distances[(goal_x, goal_y)]:
+        cost_goal = cost + distances[(goal_x, goal_y)][(x, y)]
         if (
           (goal_x, goal_y) not in costs or
           cost_goal < costs[(goal_x, goal_y)]
@@ -705,51 +718,31 @@ class UniformCostSearch(SearchAlgorithm):
           heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
 
       for (cx, cy), dist in distances[(goal_x, goal_y)].items():
-        if (cx, cy) in distances[(nx, ny)]:
-          cost_n_c = distances[(nx, ny)][(cx, cy)]
-          cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
-          cost_goal = cost_n_c - cost_g_c
-          if cost_goal < 0:
-            continue
+        if (cx, cy) in distances[(x, y)]:
+          cost_n_c = distances[(x, y)][(cx, cy)]
           if (
-            (goal_x, goal_y) not in costs or
-            cost_goal < costs[(goal_x, goal_y)]
+            (cx, cy) not in costs or
+            cost_n_c < costs[(cx, cy)]
           ):
-            costs[(goal_x, goal_y)] = cost_goal
-            heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
+            costs[(cx, cy)] = cost_n_c
+            heapq.heappush(pq, (cost_n_c, (cx, cy), direction))
 
-    while pq:
-      cost, (x, y), direction = heapq.heappop(pq)
-      if (x, y) in costs and cost != costs[(x, y)]:
-        continue
-      if (x, y) == state.pacman.pos:
-        return direction
       for (nx, ny), (dist) in distances[(x, y)].items():
         new_cost = cost + dist
         if (nx, ny) not in costs or new_cost < costs[(nx, ny)]:
           costs[(nx, ny)] = new_cost
           heapq.heappush(pq, (new_cost, (nx, ny), direction))
-          if (nx, ny) in distances[(goal_x, goal_y)]:
-            cost_goal = cost + dist + distances[(goal_x, goal_y)][(nx, ny)]
-            if (
-              (goal_x, goal_y) not in costs or
-              cost_goal < costs[(goal_x, goal_y)]
-            ):
-              costs[(goal_x, goal_y)] = cost_goal
-              heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
 
     return best_direction
 
 
 @dataclass(slots=True)
 class AStarSearch(SearchAlgorithm):
-  graph_cost: GraphCostType = field(default_factory=dict)
+  graph_cost: GraphCostType
 
   @classmethod
   def new(cls, state: GameState) -> Self:
-    instance = cls()
-    instance.graph_cost = jps_graph(state)
-    return instance
+    return cls(graph_cost=get_jps_graph(state))
 
   def search(
     self,
@@ -771,9 +764,10 @@ class AStarSearch(SearchAlgorithm):
       goal_x = 0
     if goal_x == state.width:
       goal_x = state.width - 1
-    goal = (goal_x, goal_y)
+    goal: tuple[int, int] = (goal_x, goal_y)
 
     distances = self.graph_cost
+
     costs[(initial_x, initial_y)] = 0
     best_direction: Direction = dirs[0]
 
@@ -800,10 +794,10 @@ class AStarSearch(SearchAlgorithm):
           heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
 
       if goal in distances:
-        for (cx, cy) in distances[goal].items():
+        for (cx, cy) in distances[(goal_x, goal_y)]:
           if (nx, ny) in distances and (cx, cy) in distances[(nx, ny)]:
             cost_n_c = distances[(nx, ny)][(cx, cy)]
-            cost_g_c = distances[goal][(cx, cy)]
+            cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
             cost_goal = cost_n_c - cost_g_c
             if cost_goal < 0:
               continue
@@ -960,14 +954,14 @@ class GameState:
       color=Config.INKY_COLOR,
       pos=(1, 1),
       dir='right',
-      algorithm=UniformCostSearch.new(self)
+      algorithm=GreedyBestFirstSearch.new(self)
     ))
 
     self.ghosts.append(Ghost(
       color=Config.CLYDE_COLOR,
       pos=(self.width - 2, 1),
       dir='left',
-      algorithm=DepthFirstSearch.new(self)
+      algorithm=GreedyBestFirstSearch.new(self)
     ))
 
   @classmethod
