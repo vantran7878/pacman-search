@@ -723,7 +723,7 @@ def get_jps_graph(
         continue
 
       queue: deque[tuple[int, int, int]] = deque([(x, y, 0)])
-      visited = Bitset2D(x, y)
+      visited = Bitset2D(w, h)
       visited.add(x, y)
 
       while queue:
