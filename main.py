@@ -18,7 +18,6 @@ class Config:
   COIN_RADIUS: Final = 4
   PELLET_RADIUS: Final = 8
   HEADER_HEIGHT: Final = 64
-  SIDEBAR_WIDTH: Final = 512
   LINE_HEIGHT: Final = 32
 
   COIN_COLOR: Final = (255, 184, 151, 255)
@@ -32,7 +31,6 @@ class Config:
   INKY_COLOR: Final = (0, 255, 222, 255)
   CLYDE_COLOR: Final = (255, 184, 71, 255)
 
-  SIDEBAR_BG: Final = (18, 18, 18, 255)
   TPS: Final = 4
 
 
@@ -49,26 +47,6 @@ OPPOSITE_DIR: Final[dict[Direction, Direction]] = {
   'down': 'up',
   'left': 'right'
 }
-
-
-@dataclass(slots=True)
-class FPSCounter:
-  accumulated_frames: int = 0
-  accumulated_time: float = 0
-  fps: int = 0
-
-  def update(self, dt: float) -> bool:
-    self.accumulated_time += dt
-    self.accumulated_frames += 1
-
-    if self.accumulated_time >= 1:
-      self.fps = self.accumulated_frames
-      self.accumulated_time = 0
-      self.accumulated_frames = 0
-
-      return True
-
-    return False
 
 
 @dataclass(slots=True)
@@ -204,56 +182,6 @@ class SearchAlgorithm(Protocol):
       return OPPOSITE_DIR[ghost.dir]
 
     return self.search(ghost, directions, state)
-
-
-@dataclass(slots=True)
-class GreedyBestFirstSearch(SearchAlgorithm):
-
-  @classmethod
-  def new(cls, state: GameState) -> Self:
-    _ = state
-    return cls()
-
-  @staticmethod
-  def squared_distance(
-    p0: tuple[int, int],
-    direction: Direction,
-    p1: tuple[int, int],
-  ) -> int:
-    x0, y0 = p0
-    x1, y1 = p1
-
-    xd, yd = NEXT_POS[direction]
-    dx = x0 + xd - x1
-    dy = y0 + yd - y1
-
-    return dx * dx + dy * dy
-
-  def search(
-    self,
-    ghost: Ghost,
-    dirs: list[Direction],
-    state: GameState,
-  ) -> Direction:
-    best_direction = dirs.pop()
-    best_distance = GreedyBestFirstSearch.squared_distance(
-      ghost.pos,
-      best_direction,
-      state.pacman.pos
-    )
-
-    for direction in dirs:
-      distance = GreedyBestFirstSearch.squared_distance(
-        ghost.pos,
-        direction,
-        state.pacman.pos
-      )
-
-      if distance < best_distance:
-        best_direction = direction
-        best_distance = distance
-
-    return best_direction
 
 
 @dataclass(slots=True)
@@ -1038,6 +966,7 @@ class GameState:
 
   pacman: Pacman
 
+  game_over: bool = False
   score: int = 0
   removed_coins: list[tuple[int, int]] = field(default_factory=list)
   ghosts: list[Ghost] = field(default_factory=list)
@@ -1312,15 +1241,6 @@ class Renderer:
       for ghost in state.ghosts
     ]
 
-    self.sidebar_background = pyglet.shapes.Rectangle(
-      x=w * Config.PX_PER_UNIT,
-      y=0,
-      width=Config.SIDEBAR_WIDTH,
-      height=h * Config.PX_PER_UNIT + Config.HEADER_HEIGHT,
-      color=Config.SIDEBAR_BG,
-      batch=self.batch,
-    )
-
     self.score_label = pyglet.text.Label(
       'Score: 0',
       font_size=Config.HEADER_HEIGHT // 3,
@@ -1329,27 +1249,6 @@ class Renderer:
       color=Config.PACMAN_COLOR,
       anchor_x='center',
       anchor_y='center',
-      batch=self.batch,
-    )
-
-    self.stats_title = pyglet.text.Label(
-      'Statistics',
-      font_size=Config.HEADER_HEIGHT // 3,
-      x=w * Config.PX_PER_UNIT + Config.SIDEBAR_WIDTH // 2,
-      y=h * Config.PX_PER_UNIT + Config.HEADER_HEIGHT // 2,
-      color=Config.PACMAN_COLOR,
-      anchor_y='center',
-      anchor_x='center',
-      batch=self.batch,
-    )
-
-    self.fps_counter = pyglet.text.Label(
-      'Frame rate: 0 FPS',
-      font_size=Config.PX_PER_UNIT * 5 // 8,
-      x=w * Config.PX_PER_UNIT + Config.PX_PER_UNIT,
-      y=h * Config.PX_PER_UNIT - Config.LINE_HEIGHT // 2,
-      anchor_y='center',
-      anchor_x='left',
       batch=self.batch,
     )
 
@@ -1405,13 +1304,40 @@ def main():
   state = GameState.from_file('./map.txt')
   state.add_ghosts()
 
+  window_width = Config.PX_PER_UNIT * state.width
+  window_height = Config.PX_PER_UNIT * state.height + Config.HEADER_HEIGHT
+
   window = pyglet.window.Window(
-    width=Config.PX_PER_UNIT * state.width + Config.SIDEBAR_WIDTH,
-    height=Config.PX_PER_UNIT * state.height + Config.HEADER_HEIGHT,
+    width=window_width,
+    height=window_height,
     caption='Pacman search',
   )
 
   renderer = Renderer(state)
+
+  game_over_batch = pyglet.graphics.Batch()
+
+  game_over_bg = pyglet.shapes.Rectangle(
+    x=0,
+    y=0,
+    width=window_width,
+    height=window_height,
+    batch=game_over_batch,
+    color=(0, 0, 0, 192)
+  )
+
+  game_over_label = pyglet.text.Label(
+    'Game over',
+    font_size=2 * Config.PX_PER_UNIT,
+    x=window_width // 2,
+    y=window_height // 2,
+    color=Config.PACMAN_COLOR,
+    anchor_x='center',
+    anchor_y='center',
+    batch=game_over_batch,
+  )
+
+  _ = (game_over_bg, game_over_label)
 
   def on_key_press(symbol: int, modifiers: int):
     keymap: dict[int, Direction] = {
@@ -1436,22 +1362,40 @@ def main():
     if modifiers == 0 and direction is not None:
       state.pacman.next_dir = direction
 
-  fps_counter = FPSCounter()
-
   def update(dt: float):
-    if fps_counter.update(dt):
-      renderer.fps_counter.text = f"Frame rate: {fps_counter.fps} FPS"
     state.pacman.update(dt, state)
+    pacman_x, pacman_y = state.pacman.pos
+
+    if state.pacman.dir is not None:
+      dx, dy = NEXT_POS[state.pacman.dir]
+      pacman_x += dx * state.pacman.frame
+      pacman_y += dy * state.pacman.frame
+    else:
+      pacman_x += 0.5
+
     for ghost in state.ghosts:
       ghost.update(dt, state)
 
+      ghost_x, ghost_y = ghost.pos
+      dx, dy = NEXT_POS[ghost.dir]
+      ghost_x += dx * ghost.frame
+      ghost_y += dy * ghost.frame
+
+      dx = ghost_x - pacman_x
+      dy = ghost_y - pacman_y
+
+      if dx * dx + dy * dy <= 2.56:
+        state.game_over = True
+        pyglet.clock.unschedule(update)  # type: ignore
+
+  def on_draw():
     window.clear()
     renderer.render(state)
 
-  def on_draw():
-    pass
+    if state.game_over:
+      game_over_batch.draw()
 
-  pyglet.clock.schedule(update)  # type: ignore
+  pyglet.clock.schedule_interval(update, 1 / 120)  # type: ignore
   window.event(on_key_press)  # type: ignore
   window.event(on_draw)  # type: ignore
 
