@@ -335,13 +335,11 @@ def jps_graph(
 
 @dataclass(slots=True)
 class UniformCostSearch(SearchAlgorithm):
-  graph_cost: GraphCostType = field(default_factory=dict)
+  graph_cost: GraphCostType
 
   @classmethod
   def new(cls, state: GameState) -> Self:
-    instance = cls()
-    instance.graph_cost = jps_graph(state)
-    return instance
+    return cls(graph_cost=jps_graph(state))
 
   def search(
     self,
@@ -377,11 +375,15 @@ class UniformCostSearch(SearchAlgorithm):
       heapq.heappush(pq, (1, (nx, ny), direction))
       costs[(nx, ny)] = 1
 
-      if (nx, ny) == (goal_x, goal_y):
+    while pq:
+      cost, (x, y), direction = heapq.heappop(pq)
+      if (x, y) in costs and cost != costs[(x, y)]:
         continue
+      if (x, y) == state.pacman.pos:
+        return direction
 
-      if (nx, ny) in distances[(goal_x, goal_y)]:
-        cost_goal = 1 + distances[(goal_x, goal_y)][(nx, ny)]
+      if (x, y) in distances[(goal_x, goal_y)]:
+        cost_goal = cost + distances[(goal_x, goal_y)][(x, y)]
         if (
           (goal_x, goal_y) not in costs or
           cost_goal < costs[(goal_x, goal_y)]
@@ -390,51 +392,31 @@ class UniformCostSearch(SearchAlgorithm):
           heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
 
       for (cx, cy), dist in distances[(goal_x, goal_y)].items():
-        if (cx, cy) in distances[(nx, ny)]:
-          cost_n_c = distances[(nx, ny)][(cx, cy)]
-          cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
-          cost_goal = cost_n_c - cost_g_c
-          if cost_goal < 0:
-            continue
+        if (cx, cy) in distances[(x, y)]:
+          cost_n_c = distances[(x, y)][(cx, cy)]
           if (
-            (goal_x, goal_y) not in costs or
-            cost_goal < costs[(goal_x, goal_y)]
+            (cx, cy) not in costs or
+            cost_n_c < costs[(cx, cy)]
           ):
-            costs[(goal_x, goal_y)] = cost_goal
-            heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
+            costs[(cx, cy)] = cost_n_c
+            heapq.heappush(pq, (cost_n_c, (cx, cy), direction))
 
-    while pq:
-      cost, (x, y), direction = heapq.heappop(pq)
-      if (x, y) in costs and cost != costs[(x, y)]:
-        continue
-      if (x, y) == state.pacman.pos:
-        return direction
       for (nx, ny), (dist) in distances[(x, y)].items():
         new_cost = cost + dist
         if (nx, ny) not in costs or new_cost < costs[(nx, ny)]:
           costs[(nx, ny)] = new_cost
           heapq.heappush(pq, (new_cost, (nx, ny), direction))
-          if (nx, ny) in distances[(goal_x, goal_y)]:
-            cost_goal = cost + dist + distances[(goal_x, goal_y)][(nx, ny)]
-            if (
-              (goal_x, goal_y) not in costs or
-              cost_goal < costs[(goal_x, goal_y)]
-            ):
-              costs[(goal_x, goal_y)] = cost_goal
-              heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
 
     return best_direction
 
 
 @dataclass(slots=True)
 class AStarSearch(SearchAlgorithm):
-  graph_cost: GraphCostType = field(default_factory=dict)
+  graph_cost: GraphCostType
 
   @classmethod
   def new(cls, state: GameState) -> Self:
-    instance = cls()
-    instance.graph_cost = jps_graph(state)
-    return instance
+    return cls(graph_cost=jps_graph(state))
 
   def search(
     self,
@@ -456,9 +438,10 @@ class AStarSearch(SearchAlgorithm):
       goal_x = 0
     if goal_x == state.width:
       goal_x = state.width - 1
-    goal = (goal_x, goal_y)
+    goal: tuple[int, int] = (goal_x, goal_y)
 
     distances = self.graph_cost
+
     costs[(initial_x, initial_y)] = 0
     best_direction: Direction = dirs[0]
 
@@ -485,10 +468,10 @@ class AStarSearch(SearchAlgorithm):
           heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
 
       if goal in distances:
-        for (cx, cy) in distances[goal].items():
+        for (cx, cy) in distances[(goal_x, goal_y)]:
           if (nx, ny) in distances and (cx, cy) in distances[(nx, ny)]:
             cost_n_c = distances[(nx, ny)][(cx, cy)]
-            cost_g_c = distances[goal][(cx, cy)]
+            cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
             cost_goal = cost_n_c - cost_g_c
             if cost_goal < 0:
               continue
@@ -645,14 +628,14 @@ class GameState:
       color=Config.INKY_COLOR,
       pos=(1, 1),
       dir='right',
-      algorithm=UniformCostSearch.new(self)
+      algorithm=GreedyBestFirstSearch.new(self)
     ))
 
     self.ghosts.append(Ghost(
       color=Config.CLYDE_COLOR,
       pos=(self.width - 2, 1),
       dir='left',
-      algorithm=GreedyBestFirstSearch.new(self)
+      algorithm=UniformCostSearch.new(self)
     ))
 
   @classmethod
