@@ -256,6 +256,321 @@ class GreedyBestFirstSearch(SearchAlgorithm):
     return best_direction
 
 
+@dataclass(slots=True)
+class BreadthFirstSearch(SearchAlgorithm):
+
+  @classmethod
+  def new(cls, state: GameState) -> Self:
+    _ = state
+    return cls()
+
+  def search(
+    self,
+    ghost: Ghost,
+    dirs: list[Direction],
+    state: GameState
+  ) -> Direction:
+    initial_x, initial_y = ghost.pos
+    queue: deque[tuple[int, int, Direction]] = deque()
+    visited = set([ghost.pos])
+
+    for direction in dirs:
+      dx, dy = NEXT_POS[direction]
+      if (initial_x + dx, initial_y + dy) == state.pacman.pos:
+        return direction
+
+      queue.append((initial_x + dx, initial_y + dy, direction))
+
+    while queue:
+      x, y, first_move = queue.popleft()
+
+      for dx, dy in NEXT_POS.values():
+        next_x, next_y = x + dx, y + dy
+
+        if next_x < 0 or next_x >= state.width:
+          continue
+
+        if next_y < 0 or next_y >= state.height:
+          continue
+
+        if state.map.walls.get(next_x, next_y):
+          continue
+
+        if (next_x, next_y) in visited:
+          continue
+
+        if (next_x, next_y) == state.pacman.pos:
+          return first_move
+
+        queue.append((next_x, next_y, first_move))
+        visited.add((next_x, next_y))
+
+    return dirs[0]
+
+
+@dataclass(slots=True)
+class DepthFirstSearch(SearchAlgorithm):
+  jps_graph: dict[
+    tuple[int, int],
+    list[tuple[tuple[int, int], int, Direction]]
+  ] = field(default_factory=dict)
+
+  @classmethod
+  def new(cls, state: GameState) -> Self:
+    instance = cls()
+    instance.get_jump_point_graph(state)
+    return instance
+
+  def get_neighbors_node(
+    self,
+    state: GameState,
+    start_pos: tuple[int, int]
+  ) -> list[tuple[int, int]]:
+    initial_x, initial_y = start_pos
+    stack: deque[tuple[tuple[int, int], int]] = deque()
+    neighbors: list[tuple[int, int]] = []
+    visited = set([start_pos])
+
+    for direction, (dx, dy) in NEXT_POS.items():
+      nx, ny = initial_x + dx, initial_y + dy
+
+      if nx < 0 or nx >= state.width:
+        continue
+
+      if ny < 0 or ny >= state.height:
+        continue
+
+      if state.map.walls.get(nx, ny):
+        continue
+
+      stack.append(((nx, ny), 1))
+      if (nx, ny) not in self.jps_graph:
+        self.jps_graph[(nx, ny)] = [
+          ((initial_x, initial_y), 1, OPPOSITE_DIR[direction])
+        ]
+      else:
+        self.jps_graph[(nx, ny)].append(
+          ((initial_x, initial_y), 1, OPPOSITE_DIR[direction])
+        )
+
+    while stack:
+      (x, y), cost = stack.pop()
+      num_hallway = 0
+
+      for direction, (dx, dy) in NEXT_POS.items():
+        nx, ny = x + dx, y + dy
+        if nx < 0 or nx >= state.width:
+          continue
+
+        if ny < 0 or ny >= state.height:
+          continue
+
+        if state.map.walls.get(nx, ny):
+          continue
+
+        if (nx, ny) in visited:
+          continue
+
+        num_hallway += 1
+
+      if num_hallway != 1:
+        neighbors.append((x, y))
+
+      else:
+        for direction, (dx, dy) in NEXT_POS.items():
+          nx, ny = x + dx, y + dy
+          if nx < 0 or nx >= state.width:
+            continue
+
+          if ny < 0 or ny >= state.height:
+            continue
+
+          if state.map.walls.get(nx, ny):
+            continue
+
+          if (nx, ny) in visited:
+            continue
+
+          stack.append(((nx, ny), cost + 1))
+
+          if (nx, ny) not in self.jps_graph:
+            self.jps_graph[(nx, ny)] = [
+              ((initial_x, initial_y), cost + 1, OPPOSITE_DIR[direction])
+            ]
+          else:
+            self.jps_graph[(nx, ny)].append(
+              ((initial_x, initial_y), cost + 1, OPPOSITE_DIR[direction])
+            )
+
+          break
+
+        visited.add((x, y))
+    return neighbors
+
+  def get_jump_point_graph(
+    self,
+    state: GameState
+  ) -> None:
+    visited_nodes: set[tuple[int, int]] = set()
+    initial_x, initial_y = state.pacman.pos
+
+    stack = deque([(initial_x, initial_y)])
+
+    # Finding first node
+    while stack:
+      x, y = stack.pop()
+      num_hallway = 0
+
+      for dx, dy in NEXT_POS.values():
+        nx, ny = x + dx, y + dy
+        if nx < 0 or nx >= state.width:
+          continue
+
+        if ny < 0 or ny >= state.height:
+          continue
+
+        if state.map.walls.get(nx, ny):
+          continue
+
+        stack.append((x + dx, y + dy))
+        num_hallway += 1
+
+      if num_hallway != 2:
+        stack.clear()
+        stack.append((x, y))
+        break
+
+    while stack:
+      x, y = stack.pop()
+      if (x, y) in visited_nodes:
+        continue
+      visited_nodes.add((x, y))
+
+      for node in DepthFirstSearch.get_neighbors_node(self, state, (x, y)):
+        stack.append(node)
+
+    order = ['up', 'right', 'down', 'left']
+    for key in self.jps_graph:
+      self.jps_graph[key] = sorted(
+        self.jps_graph[key], key=lambda x: order.index(x[2])
+      )
+
+  def search(
+    self,
+    ghost: Ghost,
+    dirs: list[Direction],
+    state: GameState
+  ) -> Direction:
+    initial_x, initial_y = ghost.pos
+
+    for direction in dirs:
+      dx, dy = NEXT_POS[direction]
+
+      if (initial_x + dx, initial_y + dy) == state.pacman.pos:
+        return direction
+
+    if any(pos not in self.jps_graph for pos in (state.pacman.pos, ghost.pos)):
+      return dirs[0]
+
+    # Adding pacman to graph
+    pacman_neighbors: list[tuple[tuple[int, int], int, Direction]] = []
+    ghost_neighbors: list[tuple[tuple[int, int], int, Direction]] = []
+    sub_jps_graph: dict[tuple[int, int],
+                        list[tuple[tuple[int, int], int, Direction]]] = {}
+    stack: deque[tuple[tuple[int, int], Direction]] = deque()
+    visited_nodes = set([ghost.pos])
+
+    ghost_neighbors = self.jps_graph[ghost.pos].copy()
+    pacman_neighbors = self.jps_graph[state.pacman.pos]
+
+    for neighbor, _, _ in pacman_neighbors:
+      sub_jps_graph[neighbor] = self.jps_graph[neighbor].copy()
+
+    if len(pacman_neighbors) == 2:
+      closer_node: tuple[int, int]
+      farther_node: tuple[int, int]
+      if ([pos[0] for pos in pacman_neighbors] ==
+          [pos[0] for pos in ghost_neighbors]):
+        # case: pacman is between the same nodes as ghost
+        cost_p_node = next(
+          (cost for neighbor, cost, _ in self.jps_graph[state.pacman.pos]
+            if neighbor == pacman_neighbors[0][0])
+        )
+        cost_g_node = next(
+          (cost for neighbor, cost, _ in self.jps_graph[ghost.pos]
+            if neighbor == pacman_neighbors[0][0])
+        )
+        pacman_side: tuple[int, int]
+        if cost_p_node < cost_g_node:
+          closer_node = state.pacman.pos
+          farther_node = ghost.pos
+          pacman_side = pacman_neighbors[0][0]
+        else:
+          closer_node = ghost.pos
+          farther_node = state.pacman.pos
+          pacman_side = pacman_neighbors[1][0]
+
+        for i, (neighbor, cost, direction) in enumerate(
+          ghost_neighbors
+        ):
+          if neighbor == pacman_side:
+            ghost_neighbors[i] = (
+              state.pacman.pos, cost, direction
+            )
+
+      else:
+        closer_node = farther_node = state.pacman.pos
+
+      for i, (neighbor, cost, direction) in enumerate(
+        sub_jps_graph[pacman_neighbors[0][0]]
+      ):
+        if neighbor == pacman_neighbors[1][0]:
+          sub_jps_graph[pacman_neighbors[0][0]][i] = (
+            closer_node, cost, direction
+          )
+
+      for i, (neighbor, cost, direction) in enumerate(
+        sub_jps_graph[pacman_neighbors[1][0]]
+      ):
+        if neighbor == pacman_neighbors[0][0]:
+          sub_jps_graph[pacman_neighbors[1][0]][i] = (
+            farther_node, cost, direction
+          )
+
+    if any(ghost.pos == pos[0] for pos in pacman_neighbors):
+      for neighbor, _, direction in sub_jps_graph[ghost.pos]:
+        if direction in dirs:
+          stack.append((neighbor, direction))
+    else:
+      for neighbor, _, direction in ghost_neighbors:
+        if direction in dirs:
+          stack.append((neighbor, direction))
+
+    while stack:
+      node, first_move = stack.pop()
+      visited_nodes.add(node)
+      if node == state.pacman.pos:
+        return first_move
+
+      if any(node == pos[0] for pos in pacman_neighbors):
+        for neighbor, _, _ in sub_jps_graph[node]:
+          if neighbor in visited_nodes:
+            continue
+
+          if neighbor == state.pacman.pos:
+            return first_move
+
+          stack.append((neighbor, first_move))
+      else:
+        for neighbor, _, _ in self.jps_graph[node]:
+          if neighbor in visited_nodes:
+            continue
+
+          stack.append((neighbor, first_move))
+
+    return dirs[0]
+
+
 type GraphCostType = dict[tuple[int, int], dict[tuple[int, int], int]]
 
 
@@ -638,7 +953,7 @@ class GameState:
       color=Config.PINKY_COLOR,
       pos=(self.width - 2, self.height - 2),
       dir='left',
-      algorithm=GreedyBestFirstSearch.new(self)
+      algorithm=BreadthFirstSearch.new(self)
     ))
 
     self.ghosts.append(Ghost(
@@ -652,7 +967,7 @@ class GameState:
       color=Config.CLYDE_COLOR,
       pos=(self.width - 2, 1),
       dir='left',
-      algorithm=GreedyBestFirstSearch.new(self)
+      algorithm=DepthFirstSearch.new(self)
     ))
 
   @classmethod
