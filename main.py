@@ -272,7 +272,8 @@ class BreadthFirstSearch(SearchAlgorithm):
   ) -> Direction:
     initial_x, initial_y = ghost.pos
     queue: deque[tuple[int, int, Direction]] = deque()
-    visited = set([ghost.pos])
+    visited = Bitset2D(state.width, state.height)
+    visited.add(initial_x, initial_y)
 
     for direction in dirs:
       dx, dy = NEXT_POS[direction]
@@ -296,14 +297,14 @@ class BreadthFirstSearch(SearchAlgorithm):
         if state.map.walls.get(next_x, next_y):
           continue
 
-        if (next_x, next_y) in visited:
+        if visited.get(next_x, next_y):
           continue
 
         if (next_x, next_y) == state.pacman.pos:
           return first_move
 
         queue.append((next_x, next_y, first_move))
-        visited.add((next_x, next_y))
+        visited.add(next_x, next_y)
 
     return dirs[0]
 
@@ -319,7 +320,8 @@ def get_neighbors_node(
   initial_x, initial_y = start_pos
   stack: deque[tuple[tuple[int, int], int]] = deque()
   neighbors: list[tuple[int, int]] = []
-  visited = set([start_pos])
+  visited = Bitset2D(state.width, state.height)
+  visited.add(initial_x, initial_y)
 
   for direction, (dx, dy) in NEXT_POS.items():
     nx, ny = initial_x + dx, initial_y + dy
@@ -358,7 +360,7 @@ def get_neighbors_node(
       if state.map.walls.get(nx, ny):
         continue
 
-      if (nx, ny) in visited:
+      if visited.get(nx, ny):
         continue
 
       num_hallway += 1
@@ -378,7 +380,7 @@ def get_neighbors_node(
         if state.map.walls.get(nx, ny):
           continue
 
-        if (nx, ny) in visited:
+        if visited.get(nx, ny):
           continue
 
         stack.append(((nx, ny), cost + 1))
@@ -394,7 +396,7 @@ def get_neighbors_node(
 
         break
 
-      visited.add((x, y))
+      visited.add(x, y)
   return neighbors
 
 
@@ -408,7 +410,7 @@ def get_jump_point_graph(
     tuple[int, int],
     list[tuple[tuple[int, int], int, Direction]]
   ] = {}
-  visited_nodes: set[tuple[int, int]] = set()
+  visited_nodes = Bitset2D(state.width, state.height)
   initial_x, initial_y = state.pacman.pos
 
   stack = deque([(initial_x, initial_y)])
@@ -439,9 +441,9 @@ def get_jump_point_graph(
 
   while stack:
     x, y = stack.pop()
-    if (x, y) in visited_nodes:
+    if visited_nodes.get(x, y):
       continue
-    visited_nodes.add((x, y))
+    visited_nodes.add(x, y)
 
     for node in get_neighbors_node(jps_graph, state, (x, y)):
       stack.append(node)
@@ -489,7 +491,8 @@ class DepthFirstSearch(SearchAlgorithm):
     sub_jps_graph: dict[tuple[int, int],
                         list[tuple[tuple[int, int], int, Direction]]] = {}
     stack: deque[tuple[tuple[int, int], Direction]] = deque()
-    visited_nodes = set([ghost.pos])
+    visited_nodes = Bitset2D(state.width, state.height)
+    visited_nodes.add(initial_x, initial_y)
 
     ghost_neighbors = self.jps_graph[ghost.pos].copy()
     pacman_neighbors = self.jps_graph[state.pacman.pos]
@@ -558,26 +561,26 @@ class DepthFirstSearch(SearchAlgorithm):
           stack.append((neighbor, direction))
 
     while stack:
-      node, first_move = stack.pop()
-      visited_nodes.add(node)
-      if node == state.pacman.pos:
+      (x, y), first_move = stack.pop()
+      visited_nodes.add(x, y)
+      if (x, y) == state.pacman.pos:
         return first_move
 
-      if any(node == pos[0] for pos in pacman_neighbors):
-        for neighbor, _, _ in sub_jps_graph[node]:
-          if neighbor in visited_nodes:
+      if any((x, y) == pos[0] for pos in pacman_neighbors):
+        for (neighbor_x, neighbor_y), _, _ in sub_jps_graph[(x, y)]:
+          if visited_nodes.get(neighbor_x, neighbor_y):
             continue
 
-          if neighbor == state.pacman.pos:
+          if (neighbor_x, neighbor_y) == state.pacman.pos:
             return first_move
 
-          stack.append((neighbor, first_move))
+          stack.append(((neighbor_x, neighbor_y), first_move))
       else:
-        for neighbor, _, _ in self.jps_graph[node]:
-          if neighbor in visited_nodes:
+        for (neighbor_x, neighbor_y), _, _ in self.jps_graph[(x, y)]:
+          if visited_nodes.get(neighbor_x, neighbor_y):
             continue
 
-          stack.append((neighbor, first_move))
+          stack.append(((neighbor_x, neighbor_y), first_move))
 
     return dirs[0]
 
@@ -627,7 +630,8 @@ def get_jps_graph(
         continue
 
       queue: deque[tuple[int, int, int]] = deque([(x, y, 0)])
-      visited = {(x, y)}
+      visited = Bitset2D(x, y)
+      visited.add(x, y)
 
       while queue:
         cx, cy, dist = queue.popleft()
@@ -636,7 +640,7 @@ def get_jps_graph(
             cost[(x, y)] = {}
           cost[(x, y)][(cx, cy)] = dist
           continue
-        visited.add((cx, cy))
+        visited.add(cx, cy)
 
         for direction in dirs:
           dx, dy = NEXT_POS[direction]
@@ -647,7 +651,7 @@ def get_jps_graph(
             continue
           if state.map.walls.get(next_x, next_y):
             continue
-          if (next_x, next_y) in visited:
+          if visited.get(next_x, next_y):
             continue
           if (next_x, next_y) in v and (next_x, next_y) != (x, y):
             if (x, y) not in cost:
@@ -954,7 +958,7 @@ class GameState:
       color=Config.INKY_COLOR,
       pos=(1, 1),
       dir='right',
-      algorithm=GreedyBestFirstSearch.new(self)
+      algorithm=DepthFirstSearch.new(self)
     ))
 
     self.ghosts.append(Ghost(
