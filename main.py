@@ -7,7 +7,6 @@ import heapq
 from typing import Self, Final, Literal, Protocol
 from collections.abc import Generator
 from collections import deque
-
 import pyglet  # type: ignore
 import numpy as np
 
@@ -428,6 +427,102 @@ class UniformCostSearch(SearchAlgorithm):
 
 
 @dataclass(slots=True)
+class AStarSearch(SearchAlgorithm):
+  graph_cost: GraphCostType = field(default_factory=dict)
+
+  @classmethod
+  def new(cls, state: GameState) -> Self:
+    instance = cls()
+    instance.graph_cost = jps_graph(state)
+    return instance
+
+  def search(
+    self,
+    ghost: Ghost,
+    dirs: list[Direction],
+    state: GameState,
+  ) -> Direction:
+
+    def heuristic(a: tuple[int, int], b: tuple[int, int]) -> int:
+      return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+    # Priority queue items: (f_score, g_score, (x, y), first_direction)
+    pq: list[tuple[int, int, tuple[int, int], Direction]] = []
+    costs: dict[tuple[int, int], int] = {}
+    initial_x, initial_y = ghost.pos
+
+    goal_x, goal_y = state.pacman.pos
+    if goal_x == -1:
+      goal_x = 0
+    if goal_x == state.width:
+      goal_x = state.width - 1
+    goal = (goal_x, goal_y)
+
+    distances = self.graph_cost
+    costs[(initial_x, initial_y)] = 0
+    best_direction: Direction = dirs[0]
+
+    for direction in dirs:
+      dx, dy = NEXT_POS[direction]
+      nx, ny = initial_x + dx, initial_y + dy
+      if (nx < 0 or nx >= state.width or
+         ny < 0 or ny >= state.height or
+         state.map.walls.get(nx, ny)):
+        continue
+      g = 1
+      f = g + heuristic((nx, ny), goal)
+      heapq.heappush(pq, (f, g, (nx, ny), direction))
+      costs[(nx, ny)] = g
+
+      if (nx, ny) == goal:
+        continue
+
+      if goal in distances and (nx, ny) in distances[goal]:
+        cost_goal = 1 + distances[goal][(nx, ny)]
+        if goal not in costs or cost_goal < costs[goal]:
+          costs[goal] = cost_goal
+          f_goal = cost_goal + heuristic(goal, goal)
+          heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
+
+      if goal in distances:
+        for (cx, cy) in distances[goal].items():
+          if (nx, ny) in distances and (cx, cy) in distances[(nx, ny)]:
+            cost_n_c = distances[(nx, ny)][(cx, cy)]
+            cost_g_c = distances[goal][(cx, cy)]
+            cost_goal = cost_n_c - cost_g_c
+            if cost_goal < 0:
+              continue
+            if goal not in costs or cost_goal < costs[goal]:
+              costs[goal] = cost_goal
+              f_goal = cost_goal + heuristic(goal, goal)
+              heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
+
+    # Main A* loop.
+    while pq:
+      f, g, (x, y), direction = heapq.heappop(pq)
+      if g != costs.get((x, y), float('inf')):
+        continue
+      if (x, y) == goal:
+        return direction
+      if (x, y) not in distances:
+        continue
+      for (nx, ny), edge_cost in distances[(x, y)].items():
+        new_cost = g + edge_cost
+        if (nx, ny) not in costs or new_cost < costs[(nx, ny)]:
+          costs[(nx, ny)] = new_cost
+          new_f = new_cost + heuristic((nx, ny), goal)
+          heapq.heappush(pq, (new_f, new_cost, (nx, ny), direction))
+          # Also check if this node connects directly to goal.
+          if goal in distances and (nx, ny) in distances[goal]:
+            cost_goal = new_cost + distances[goal][(nx, ny)]
+            if goal not in costs or cost_goal < costs[goal]:
+              costs[goal] = cost_goal
+              f_goal = cost_goal + heuristic(goal, goal)
+              heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
+    return best_direction
+
+
+@dataclass(slots=True)
 class Ghost:
   color: tuple[int, int, int, int]
   pos: tuple[int, int]
@@ -536,7 +631,7 @@ class GameState:
       color=Config.BLINKY_COLOR,
       pos=(1, self.height - 2),
       dir='right',
-      algorithm=GreedyBestFirstSearch.new(self)
+      algorithm=AStarSearch.new(self)
     ))
 
     self.ghosts.append(Ghost(
