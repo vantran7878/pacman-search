@@ -873,9 +873,11 @@ class AStarSearch(SearchAlgorithm):
     for direction in dirs:
       dx, dy = NEXT_POS[direction]
       nx, ny = initial_x + dx, initial_y + dy
-      if (nx < 0 or nx >= state.width or
-         ny < 0 or ny >= state.height or
-         state.map.walls.get(nx, ny)):
+      if (
+        nx < 0 or nx >= state.width or
+        ny < 0 or ny >= state.height or
+        state.map.walls.get(nx, ny)
+      ):
         continue
       g = 1
       f = g + heuristic((nx, ny), goal)
@@ -890,7 +892,7 @@ class AStarSearch(SearchAlgorithm):
           heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
 
       if (nx, ny) == (goal_x, goal_y):
-          continue
+        continue
 
       for (cx, cy) in distances[(goal_x, goal_y)]:
         if (cx, cy) in distances[(nx, ny)]:
