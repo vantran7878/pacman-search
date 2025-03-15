@@ -361,7 +361,6 @@ class UniformCostSearch(SearchAlgorithm):
 
     distances = self.graph_cost
     costs[(initial_x, initial_y)] = 0
-    best_direction: Direction = dirs[0]
 
     for direction in dirs:
       dx, dy = NEXT_POS[direction]
@@ -374,6 +373,19 @@ class UniformCostSearch(SearchAlgorithm):
         continue
       heapq.heappush(pq, (1, (nx, ny), direction))
       costs[(nx, ny)] = 1
+
+      if (nx, ny) == (goal_x, goal_x):
+        continue
+
+      for (cx, cy), dist in distances[(goal_x, goal_y)].items():
+        if (cx, cy) in distances[(nx, ny)]:
+          cost_n_c = distances[(nx, ny)][(cx, cy)]
+          if (
+            (cx, cy) not in costs or
+            cost_n_c < costs[(cx, cy)]
+          ):
+            costs[(cx, cy)] = cost_n_c
+            heapq.heappush(pq, (cost_n_c, (cx, cy), direction))
 
     while pq:
       cost, (x, y), direction = heapq.heappop(pq)
@@ -391,23 +403,13 @@ class UniformCostSearch(SearchAlgorithm):
           costs[(goal_x, goal_y)] = cost_goal
           heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
 
-      for (cx, cy), dist in distances[(goal_x, goal_y)].items():
-        if (cx, cy) in distances[(x, y)]:
-          cost_n_c = distances[(x, y)][(cx, cy)]
-          if (
-            (cx, cy) not in costs or
-            cost_n_c < costs[(cx, cy)]
-          ):
-            costs[(cx, cy)] = cost_n_c
-            heapq.heappush(pq, (cost_n_c, (cx, cy), direction))
-
       for (nx, ny), (dist) in distances[(x, y)].items():
         new_cost = cost + dist
         if (nx, ny) not in costs or new_cost < costs[(nx, ny)]:
           costs[(nx, ny)] = new_cost
           heapq.heappush(pq, (new_cost, (nx, ny), direction))
 
-    return best_direction
+    return dirs[0]
 
 
 @dataclass(slots=True)
