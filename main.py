@@ -459,6 +459,99 @@ def get_jump_point_graph(
 
 @dataclass(slots=True)
 class DepthFirstSearch(SearchAlgorithm):
+  stack: deque[list[Direction]]
+  visited: Bitset2D
+
+  @classmethod
+  def new(cls, state: GameState) -> Self:
+    return cls(stack=deque(), visited=Bitset2D(state.width, state.height))
+
+  def valid_direction(
+    self,
+    x: int,
+    y: int,
+    state: GameState,
+    direction: Direction
+  ) -> bool:
+    dx, dy = NEXT_POS[direction]
+
+    next_x = x + dx
+    next_y = y + dy
+
+    if next_x < 0 or next_x >= state.width:
+      return False
+
+    if next_y < 0 or next_y >= state.height:
+      return False
+
+    if state.map.walls.get(next_x, next_y):
+      return False
+
+    if self.visited.get(next_x, next_y):
+      return False
+
+    return True
+
+  def search(
+    self,
+    ghost: Ghost,
+    dirs: list[Direction],
+    state: GameState
+  ) -> Direction:
+    x, y = ghost.pos
+    self.visited.clear()
+    self.visited.add(x, y)
+
+    if len(self.stack):
+      if self.stack[0][-1] in dirs:
+        self.stack[0] = [x for x in self.stack[0] if x in dirs]
+      else:
+        self.stack.clear()
+
+    if len(self.stack) == 0:
+      self.stack.append(dirs)
+
+    for directions in self.stack:
+      dx, dy = NEXT_POS[directions[-1]]
+      x += dx
+      y += dy
+      self.visited.add(x, y)
+
+    goal_x, goal_y = state.pacman.pos
+    if goal_x == -1:
+      goal_x = 0
+
+    if goal_x == state.width:
+      goal_x = state.width - 1
+
+    while not self.visited.get(goal_x, goal_y):
+      directions: list[Direction] = [
+        d for d in NEXT_POS if self.valid_direction(x, y, state, d)
+      ]
+
+      self.stack.append(directions)
+
+      while len(self.stack[-1]) == 0:
+        self.stack.pop()
+
+        if len(self.stack) == 0:
+          return dirs[0]
+
+        dx, dy = NEXT_POS[self.stack[-1].pop()]
+        self.visited.remove(x, y)
+        x -= dx
+        y -= dy
+
+      dx, dy = NEXT_POS[self.stack[-1][-1]]
+      x += dx
+      y += dy
+      self.visited.add(x, y)
+
+    return self.stack.popleft()[-1]
+
+
+@dataclass(slots=True)
+class DepthFirstSearchOld(SearchAlgorithm):
   jps_graph: dict[
     tuple[int, int],
     list[tuple[tuple[int, int], int, Direction]]
@@ -630,7 +723,7 @@ def get_jps_graph(
         continue
 
       queue: deque[tuple[int, int, int]] = deque([(x, y, 0)])
-      visited = Bitset2D(x, y)
+      visited = Bitset2D(w, h)
       visited.add(x, y)
 
       while queue:
@@ -975,7 +1068,7 @@ class GameState:
       color=Config.CLYDE_COLOR,
       pos=(self.width - 2, 1),
       dir='left',
-      algorithm=GreedyBestFirstSearch.new(self)
+      algorithm=UniformCostSearch.new(self)
     ))
 
   @classmethod
