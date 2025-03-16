@@ -723,12 +723,16 @@ class UniformCostSearch(SearchAlgorithm):
       for (cx, cy), dist in distances[(goal_x, goal_y)].items():
         if (cx, cy) in distances[(nx, ny)]:
           cost_n_c = distances[(nx, ny)][(cx, cy)]
+          cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
+          cost_goal = cost_n_c - cost_g_c
+          if cost_goal < 0:
+            continue
           if (
-            (cx, cy) not in costs or
-            cost_n_c < costs[(cx, cy)]
+            (goal_x, goal_y) not in costs or
+            cost_goal < costs[(goal_x, goal_y)]
           ):
-            costs[(cx, cy)] = cost_n_c
-            heapq.heappush(pq, (cost_n_c, (cx, cy), direction))
+            costs[(goal_x, goal_y)] = cost_goal
+            heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
 
     while pq:
       cost, (x, y), direction = heapq.heappop(pq)
