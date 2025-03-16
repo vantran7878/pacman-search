@@ -394,32 +394,6 @@ class DepthFirstSearch(SearchAlgorithm):
   def new(cls, state: GameState) -> Self:
     return cls(stack=deque(), visited=Bitset2D(state.width, state.height))
 
-  def valid_direction(
-    self,
-    x: int,
-    y: int,
-    state: GameState,
-    direction: Direction
-  ) -> bool:
-    dx, dy = NEXT_POS[direction]
-
-    next_x = x + dx
-    next_y = y + dy
-
-    if next_x < 0 or next_x >= state.width:
-      return False
-
-    if next_y < 0 or next_y >= state.height:
-      return False
-
-    if state.map.walls.get(next_x, next_y):
-      return False
-
-    if self.visited.get(next_x, next_y):
-      return False
-
-    return True
-
   def search(
     self,
     ghost: Ghost,
@@ -453,9 +427,27 @@ class DepthFirstSearch(SearchAlgorithm):
       goal_x = state.width - 1
 
     while not self.visited.get(goal_x, goal_y):
-      directions: list[Direction] = [
-        d for d in NEXT_POS if self.valid_direction(x, y, state, d)
-      ]
+      directions: list[Direction] = []
+
+      for d, (dx, dy) in NEXT_POS.items():
+        next_x = x + dx
+        next_y = y + dy
+
+        if next_x < 0 or next_x >= state.width:
+          continue
+
+        if next_y < 0 or next_y >= state.height:
+          continue
+
+        if state.map.walls.get(next_x, next_y):
+          continue
+
+        if self.visited.get(next_x, next_y):
+          continue
+
+        directions.append(d)
+        if (next_x, next_y) == state.pacman.pos:
+          break
 
       self.stack.append(directions)
 
