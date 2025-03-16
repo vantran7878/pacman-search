@@ -466,7 +466,7 @@ class DepthFirstSearch(SearchAlgorithm):
           return dirs[0]
 
         dx, dy = NEXT_POS[self.stack[-1].pop()]
-        self.visited.remove(x, y)
+        # self.visited.remove(x, y)
         x -= dx
         y -= dy
 
@@ -1370,7 +1370,8 @@ def main():
       dx, dy = NEXT_POS[state.pacman.dir]
       pacman_x += dx * state.pacman.frame
       pacman_y += dy * state.pacman.frame
-    else:
+
+    if not state.pacman.started:
       pacman_x += 0.5
 
     for ghost in state.ghosts:
