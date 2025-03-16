@@ -720,19 +720,20 @@ class UniformCostSearch(SearchAlgorithm):
       if (nx, ny) == (goal_x, goal_x):
         continue
 
-      for (cx, cy), dist in distances[(goal_x, goal_y)].items():
-        if (cx, cy) in distances[(nx, ny)]:
-          cost_n_c = distances[(nx, ny)][(cx, cy)]
-          cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
-          cost_goal = cost_n_c - cost_g_c
-          if cost_goal < 0:
-            continue
-          if (
-            (goal_x, goal_y) not in costs or
-            cost_goal < costs[(goal_x, goal_y)]
-          ):
-            costs[(goal_x, goal_y)] = cost_goal
-            heapq.heappush(pq, (cost_goal, (goal_x, goal_y), direction))
+      if set(distances[(goal_x, goal_y)]) == set(distances[(nx, ny)]):
+        for (cx, cy), dist in distances[(goal_x, goal_y)].items():
+          if (cx, cy) in distances[(nx, ny)]:
+            cost_n_c = distances[(nx, ny)][(cx, cy)]
+            cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
+            cost_goal = cost_n_c - cost_g_c
+            if cost_goal < 0:
+              continue
+            if (
+              (goal_x, goal_y) not in costs or
+              cost_goal < costs[(goal_x, goal_y)]
+            ):
+              costs[(goal_x, goal_y)] = cost_goal + 1
+              heapq.heappush(pq, (cost_goal + 1, (goal_x, goal_y), direction))
 
     while pq:
       cost, (x, y), direction = heapq.heappop(pq)
@@ -818,17 +819,18 @@ class AStarSearch(SearchAlgorithm):
       if (nx, ny) == (goal_x, goal_y):
         continue
 
-      for (cx, cy) in distances[(goal_x, goal_y)]:
-        if (cx, cy) in distances[(nx, ny)]:
-          cost_n_c = distances[(nx, ny)][(cx, cy)]
-          cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
-          cost_goal = cost_n_c - cost_g_c
-          if cost_goal < 0:
-            continue
-          if goal not in costs or cost_goal < costs[goal]:
-            costs[goal] = cost_goal
-            f_goal = cost_goal + heuristic(goal, goal)
-            heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
+      if set(distances[(goal_x, goal_y)]) == set(distances[(nx, ny)]):
+        for (cx, cy) in distances[(goal_x, goal_y)]:
+          if (cx, cy) in distances[(nx, ny)]:
+            cost_n_c = distances[(nx, ny)][(cx, cy)]
+            cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
+            cost_goal = cost_n_c - cost_g_c
+            if cost_goal < 0:
+              continue
+            if goal not in costs or cost_goal < costs[goal]:
+              costs[goal] = cost_goal + 1
+              f_goal = cost_goal + heuristic(goal, goal)
+              heapq.heappush(pq, (f_goal + 1, cost_goal + 1, goal, direction))
 
     # Main A* loop.
     while pq:
@@ -840,17 +842,14 @@ class AStarSearch(SearchAlgorithm):
       if (x, y) not in distances:
         continue
 
-      for (cx, cy) in distances[(goal_x, goal_y)]:
-        if (cx, cy) in distances[(x, y)]:
-          cost_n_c = distances[(x, y)][(cx, cy)]
-          cost_g_c = distances[(goal_x, goal_y)][(cx, cy)]
-          cost_goal = cost_n_c - cost_g_c
-          if cost_goal < 0:
-            continue
-          if goal not in costs or cost_goal < costs[goal]:
-            costs[goal] = cost_goal
-            f_goal = cost_goal + heuristic(goal, goal)
-            heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
+      if (x, y) in distances[(goal_x, goal_y)]:
+        cost_goal = g + distances[(goal_x, goal_y)][(x, y)]
+        if cost_goal < 0:
+          continue
+        if goal not in costs or cost_goal < costs[goal]:
+          costs[goal] = cost_goal
+          f_goal = cost_goal + heuristic(goal, goal)
+          heapq.heappush(pq, (f_goal, cost_goal, goal, direction))
 
       for (nx, ny), edge_cost in distances[(x, y)].items():
         new_cost = g + edge_cost
